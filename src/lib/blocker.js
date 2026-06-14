@@ -55,7 +55,7 @@ function popupPass(doc, rules, whitelist, log) {
 // Auto-zap: remove the single highest-scoring popup/overlay even without a
 // learned rule. Opt-in per site because it is heuristic and can misfire.
 function autozapPass(doc, whitelist, log) {
-  const guess = findBestGuess(doc);
+  const guess = findBestGuess(doc, { requireText: true });
   if (!guess) return;
   if (skip(guess, whitelist)) return;
   const desc = describe(guess);

@@ -74,6 +74,16 @@ describe("runBlocker", () => {
     expect(document.querySelector("#body").style.maxHeight).toBe("none");
   });
 
+  it("auto-zap leaves empty/text-less overlays and site UI alone", () => {
+    document.body.innerHTML =
+      `<div id="overlay" style="position:fixed;z-index:9999"></div>` +
+      `<button id="btn" style="position:fixed;z-index:9999">X</button>`;
+    const azLib = { ...lib, domains: { "site.com": { rules: [], autozap: true } } };
+    runBlocker({ doc: document, library: azLib, hostname: "site.com" });
+    expect(document.querySelector("#overlay")).not.toBeNull();
+    expect(document.querySelector("#btn")).not.toBeNull();
+  });
+
   it("does not unlock content when autozap is off", () => {
     document.body.innerHTML =
       `<article id="body" style="max-height:200px;overflow:hidden">${"word ".repeat(200)}</article>`;

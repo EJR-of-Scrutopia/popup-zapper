@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Popup Zapper
 // @namespace    https://github.com/param/popup-zapper
-// @version      1.5.0
+// @version      1.5.1
 // @description  Remove login/consent/newsletter/paywall popups, restore blurred content, defeat reload traps, auto-zap overlays, and learn new popups by click.
 // @author       Param
 // @match        *://*/*
@@ -212,13 +212,18 @@
     if (WALL_TEXT.test(el.textContent || "")) score += 2;
     return score;
   }
-  function findBestGuess(doc) {
+  function findBestGuess(doc, opts = {}) {
+    const requireText = !!opts.requireText;
     let best = null;
     let bestScore = MIN_SCORE - 1;
     for (const el of doc.body.querySelectorAll("*")) {
       if (el.closest && el.closest("[data-pz]")) continue;
       if (el.id && EXT_ROOTS.test(el.id)) continue;
       if (el.closest && el.closest(CHROME_SEL)) continue;
+      if (requireText) {
+        const text = (el.textContent || "").trim();
+        if (!text || text.length > 800 || !WALL_TEXT.test(text)) continue;
+      }
       const s = scorePopupCandidate(el);
       if (s > bestScore) {
         bestScore = s;
@@ -366,7 +371,7 @@
     }
   }
   function autozapPass(doc, whitelist, log) {
-    const guess = findBestGuess(doc);
+    const guess = findBestGuess(doc, { requireText: true });
     if (!guess) return;
     if (skip(guess, whitelist)) return;
     const desc = describe(guess);

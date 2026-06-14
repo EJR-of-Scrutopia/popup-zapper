@@ -29,13 +29,20 @@ export function scorePopupCandidate(el) {
   return score;
 }
 
-export function findBestGuess(doc) {
+// requireText (used by auto-zap): only consider modal-sized elements whose text
+// reads like a wall, so we never auto-remove empty overlays or legit site UI.
+export function findBestGuess(doc, opts = {}) {
+  const requireText = !!opts.requireText;
   let best = null;
   let bestScore = MIN_SCORE - 1;
   for (const el of doc.body.querySelectorAll("*")) {
     if (el.closest && el.closest("[data-pz]")) continue; // never target our own UI
     if (el.id && EXT_ROOTS.test(el.id)) continue; // skip other extensions' roots
     if (el.closest && el.closest(CHROME_SEL)) continue; // skip site header/nav/footer
+    if (requireText) {
+      const text = (el.textContent || "").trim();
+      if (!text || text.length > 800 || !WALL_TEXT.test(text)) continue;
+    }
     const s = scorePopupCandidate(el);
     if (s > bestScore) { bestScore = s; best = el; }
   }
