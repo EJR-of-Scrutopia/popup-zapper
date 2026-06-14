@@ -1,5 +1,7 @@
 const WALL_TEXT = /sign ?in|log ?in|subscribe|sign ?up|register|cookie|consent|create (an )?account|continue reading/i;
 const MIN_SCORE = 3;
+// Other browser extensions inject their own roots; never treat them as popups.
+const EXT_ROOTS = /protonpass|1password|onepassword|bitwarden|lastpass|dashlane|grammarly|honey-|metamask|__crx/i;
 
 export function scorePopupCandidate(el) {
   if (!el || el.nodeType !== 1) return 0;
@@ -30,6 +32,7 @@ export function findBestGuess(doc) {
   let bestScore = MIN_SCORE - 1;
   for (const el of doc.body.querySelectorAll("*")) {
     if (el.closest && el.closest("[data-pz]")) continue; // never target our own UI
+    if (el.id && EXT_ROOTS.test(el.id)) continue; // skip other extensions' roots
     const s = scorePopupCandidate(el);
     if (s > bestScore) { bestScore = s; best = el; }
   }

@@ -2,6 +2,7 @@ import { getActiveRules, findMatches, matchesRule } from "./rules.js";
 import { restoreElement, restorePage, restoreBlur } from "./restore.js";
 import { findRejectButton, CMP_SELECTORS } from "./consent.js";
 import { findBestGuess } from "./learner.js";
+import { removePaywallFrames } from "./frames.js";
 import { runCleanup } from "./cleanup.js";
 
 function isWhitelisted(el, whitelist) {
@@ -83,6 +84,8 @@ export function runBlocker({ doc, library, hostname, log = () => {} }) {
   const rules = getActiveRules(library, hostname);
   const domain = (library.domains || {})[hostname];
   safe(() => consentPass(doc, log));
+  const frames = safeVal(() => removePaywallFrames(doc), []);
+  if (frames.length) log("paywall", `removed ${frames.length} paywall overlay(s): ${frames.join(", ")}`);
   if (domain && domain.cleanup) {
     safe(() => runCleanup(doc, doc.defaultView));
     log("cleanup", "cleared tracking cookies/storage");

@@ -55,6 +55,15 @@ describe("runBlocker", () => {
     expect(document.cookie).not.toMatch(/_ga=/);
   });
 
+  it("removes a known paywall-vendor iframe overlay (always on)", () => {
+    document.body.innerHTML =
+      `<div class="gallery-piano-container"><iframe src="https://buy-eu.piano.io/checkout/x"></iframe></div>` +
+      `<div id="real-image">image</div>`;
+    runBlocker({ doc: document, library: lib, hostname: "site.com" });
+    expect(document.querySelector(".gallery-piano-container")).toBeNull();
+    expect(document.querySelector("#real-image")).not.toBeNull();
+  });
+
   it("logs each action it takes", () => {
     document.body.innerHTML = `<div class="promo-modal">x</div>`;
     const events = [];

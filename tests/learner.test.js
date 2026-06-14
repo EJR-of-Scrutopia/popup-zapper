@@ -29,4 +29,10 @@ describe("findBestGuess", () => {
     document.body.innerHTML = `<div style="position:static">plain</div>`;
     expect(findBestGuess(document)).toBeNull();
   });
+
+  it("ignores other browser extensions' injected roots", () => {
+    document.body.innerHTML =
+      `<div id="protonpass-root-8218" style="position:fixed;z-index:99999">Sign in</div>`;
+    expect(findBestGuess(document)).toBeNull();
+  });
 });

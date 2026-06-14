@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Popup Zapper
 // @namespace    https://github.com/param/popup-zapper
-// @version      1.1.2
+// @version      1.2.0
 // @description  Remove login/consent/newsletter/paywall popups, restore blurred content, defeat reload traps, auto-zap overlays, and learn new popups by click.
 // @author       Param
 // @match        *://*/*
@@ -192,6 +192,7 @@
   // src/lib/learner.js
   var WALL_TEXT = /sign ?in|log ?in|subscribe|sign ?up|register|cookie|consent|create (an )?account|continue reading/i;
   var MIN_SCORE = 3;
+  var EXT_ROOTS = /protonpass|1password|onepassword|bitwarden|lastpass|dashlane|grammarly|honey-|metamask|__crx/i;
   function scorePopupCandidate(el) {
     if (!el || el.nodeType !== 1) return 0;
     const view = el.ownerDocument.defaultView || window;
@@ -215,6 +216,7 @@
     let bestScore = MIN_SCORE - 1;
     for (const el of doc.body.querySelectorAll("*")) {
       if (el.closest && el.closest("[data-pz]")) continue;
+      if (el.id && EXT_ROOTS.test(el.id)) continue;
       const s = scorePopupCandidate(el);
       if (s > bestScore) {
         bestScore = s;
@@ -222,6 +224,49 @@
       }
     }
     return bestScore >= MIN_SCORE ? best : null;
+  }
+
+  // src/lib/frames.js
+  var PAYWALL_FRAME_HOSTS = [
+    /(^|\.|\/)piano\.io/i,
+    /tinypass\.com/i,
+    /poool\.(fr|tech)/i,
+    /qiota\./i,
+    /leakypaywall/i,
+    /pelcro\./i
+  ];
+  var OVERLAY_SEL = [
+    '[class*="piano" i]',
+    '[class*="paywall" i]',
+    '[class*="gate" i]',
+    '[class*="overlay" i]',
+    '[class*="modal" i]',
+    '[id*="piano" i]',
+    '[id*="paywall" i]'
+  ].join(",");
+  function removePaywallFrames(doc) {
+    const removed = [];
+    for (const frame of doc.querySelectorAll("iframe")) {
+      const src = frame.getAttribute("src") || "";
+      if (!PAYWALL_FRAME_HOSTS.some((re) => re.test(src))) continue;
+      let target = frame;
+      try {
+        target = frame.closest(OVERLAY_SEL) || frame.parentElement || frame;
+      } catch {
+      }
+      const label = target.className && typeof target.className === "string" ? `.${target.className.trim().split(/\s+/).slice(0, 2).join(".")}` : target.tagName.toLowerCase();
+      try {
+        target.remove();
+        removed.push(label);
+      } catch {
+        try {
+          frame.remove();
+          removed.push("iframe");
+        } catch {
+        }
+      }
+    }
+    return removed;
   }
 
   // src/lib/cleanup.js
@@ -345,6 +390,8 @@
     const rules = getActiveRules(library2, hostname2);
     const domain = (library2.domains || {})[hostname2];
     safe(() => consentPass(doc, log));
+    const frames = safeVal(() => removePaywallFrames(doc), []);
+    if (frames.length) log("paywall", `removed ${frames.length} paywall overlay(s): ${frames.join(", ")}`);
     if (domain && domain.cleanup) {
       safe(() => runCleanup(doc, doc.defaultView));
       log("cleanup", "cleared tracking cookies/storage");
