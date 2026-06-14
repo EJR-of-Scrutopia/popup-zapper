@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Popup Zapper
 // @namespace    https://github.com/param/popup-zapper
-// @version      1.3.0
+// @version      1.4.0
 // @description  Remove login/consent/newsletter/paywall popups, restore blurred content, defeat reload traps, auto-zap overlays, and learn new popups by click.
 // @author       Param
 // @match        *://*/*
@@ -371,6 +371,45 @@
     safe(() => guess.remove());
     log("autozap", `auto-removed ${desc}`);
   }
+  var GATE_TEXT = /register|sign ?up|create (a )?(free )?account|continue reading|keep reading|to continue|unlock( this)? (article|content)|to read (the|this|more)|log ?in to (read|view|continue)|free account to/i;
+  function unlockContent(doc, whitelist, log) {
+    const win = doc.defaultView || window;
+    let changes = 0;
+    for (const el of doc.body.querySelectorAll("div,section,aside,dialog,form")) {
+      if (skip(el, whitelist)) continue;
+      let cs;
+      try {
+        cs = win.getComputedStyle(el);
+      } catch {
+        continue;
+      }
+      if (!/^(fixed|absolute|sticky)$/.test(cs.position)) continue;
+      const text = (el.textContent || "").trim();
+      if (text.length > 0 && text.length < 600 && GATE_TEXT.test(text)) {
+        safe(() => el.remove());
+        changes++;
+      }
+    }
+    for (const el of doc.body.querySelectorAll("*")) {
+      if (skip(el, whitelist)) continue;
+      let cs;
+      try {
+        cs = win.getComputedStyle(el);
+      } catch {
+        continue;
+      }
+      const mh = parseFloat(cs.maxHeight);
+      const clipped = /hidden|clip/.test(cs.overflow) || /hidden|clip/.test(cs.overflowY);
+      if (!Number.isNaN(mh) && cs.maxHeight !== "none" && mh < 2e3 && clipped) {
+        if ((el.textContent || "").length > 600) {
+          el.style.setProperty("max-height", "none", "important");
+          el.style.setProperty("overflow", "visible", "important");
+          changes++;
+        }
+      }
+    }
+    if (changes) log("unlock", `unlocked gated content (${changes} change(s))`);
+  }
   function restorePass(doc, whitelist, log) {
     restorePage(doc);
     for (const el of doc.body.querySelectorAll("*")) {
@@ -399,6 +438,7 @@
     safe(() => popupPass(doc, rules, library2.whitelist, log));
     if (domain && domain.autozap) {
       safe(() => autozapPass(doc, library2.whitelist, log));
+      safe(() => unlockContent(doc, library2.whitelist, log));
     }
     safe(() => restorePass(doc, library2.whitelist, log));
   }

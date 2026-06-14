@@ -64,6 +64,23 @@ describe("runBlocker", () => {
     expect(document.querySelector("#real-image")).not.toBeNull();
   });
 
+  it("auto-zap unlocks gated content: removes register gate and clears truncation", () => {
+    document.body.innerHTML =
+      `<div id="gate" style="position:fixed">Register to continue reading this article</div>` +
+      `<article id="body" style="max-height:200px;overflow:hidden">${"word ".repeat(200)}</article>`;
+    const azLib = { ...lib, domains: { "site.com": { rules: [], autozap: true } } };
+    runBlocker({ doc: document, library: azLib, hostname: "site.com" });
+    expect(document.querySelector("#gate")).toBeNull();
+    expect(document.querySelector("#body").style.maxHeight).toBe("none");
+  });
+
+  it("does not unlock content when autozap is off", () => {
+    document.body.innerHTML =
+      `<article id="body" style="max-height:200px;overflow:hidden">${"word ".repeat(200)}</article>`;
+    runBlocker({ doc: document, library: lib, hostname: "site.com" });
+    expect(document.querySelector("#body").style.maxHeight).not.toBe("none");
+  });
+
   it("logs each action it takes", () => {
     document.body.innerHTML = `<div class="promo-modal">x</div>`;
     const events = [];
