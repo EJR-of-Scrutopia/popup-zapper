@@ -74,6 +74,30 @@ Runs on every page in this order, then re-runs via observer:
 
 A per-site **master toggle** can disable the engine entirely on a domain.
 
+### Reload-trap defense (part of the blocker)
+
+Some walls keep the page in a loop — repeatedly calling `location.reload()`, a
+`setTimeout`/`setInterval` that reloads, or a `<meta http-equiv="refresh">` —
+until the user signs up. Because the script runs at `document-start`, it can
+neutralize these before the page's own scripts fire:
+
+- override `location.reload` to no-op when triggered programmatically
+- intercept `location.assign`/`location.replace` and `window.location` setters
+- strip/disable `<meta http-equiv="refresh">` tags
+- wrap `setTimeout`/`setInterval` to drop callbacks that perform a reload/redirect
+
+**Policy: smart-auto + circuit breaker.** Only suppress reloads/redirects that
+fire **without user interaction** shortly after load (heuristic: no recent
+`click`/`keydown`/`submit`, within a few seconds of load). Genuine
+user-triggered navigation (SSO, checkout) is allowed through. A **circuit
+breaker** counts reloads in a short window (tracked via `sessionStorage`); after
+N rapid reloads it freezes further reloads and shows a "reload loop blocked"
+badge instead of fighting indefinitely.
+
+**Limits (honest non-goals):** this only defeats *client-side* loops. A
+server-side 302 redirect to a login gateway, or a server-side paywall, never
+delivers the content to the browser, so it cannot be recovered client-side.
+
 ## Component: Learner engine (hotkey-armed)
 
 Flow ("guess, then confirm by click"):
@@ -151,8 +175,9 @@ reject control exists, hide the banner + restore the page. Never fabricate an
 - Observer throttle + iteration cap to avoid runaway loops.
 - Hashed/random class tokens are skipped during extraction to avoid brittle rules.
 - **Non-goal:** defeating true server-side hard paywalls (content never sent to
-  the browser). We only remove client-side nags and restore client-degraded
-  content.
+  the browser) or server-side 302 redirects to login gateways. We only remove
+  client-side nags, restore client-degraded content, and break client-side
+  reload loops.
 
 ## Error handling
 
