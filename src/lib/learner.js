@@ -29,19 +29,43 @@ export function scorePopupCandidate(el) {
   return score;
 }
 
-// requireText (used by auto-zap): only consider modal-sized elements whose text
-// reads like a wall, so we never auto-remove empty overlays or legit site UI.
+function isVisible(el, win) {
+  let cs;
+  try { cs = win.getComputedStyle(el); } catch { return true; }
+  if (cs.display === "none" || cs.visibility === "hidden" || cs.visibility === "collapse") return false;
+  if (parseFloat(cs.opacity || "1") < 0.05) return false;
+  return true;
+}
+
+// In requireText mode, a real wall covers a large part of the viewport; a login
+// button or closed menu does not. Skip the size test when layout is unavailable
+// (e.g. jsdom returns 0×0).
+function isWallSized(el, win) {
+  let rect;
+  try { rect = el.getBoundingClientRect(); } catch { return true; }
+  const area = rect.width * rect.height;
+  if (area <= 0) return true; // unknown layout — don't exclude
+  const vw = win.innerWidth || 1024;
+  const vh = win.innerHeight || 768;
+  return area >= vw * vh * 0.12;
+}
+
+// requireText (used by auto-zap): only consider visible, wall-sized elements whose
+// text reads like a wall, so we never auto-remove buttons, hidden menus, or site UI.
 export function findBestGuess(doc, opts = {}) {
   const requireText = !!opts.requireText;
+  const win = doc.defaultView || window;
   let best = null;
   let bestScore = MIN_SCORE - 1;
   for (const el of doc.body.querySelectorAll("*")) {
     if (el.closest && el.closest("[data-pz]")) continue; // never target our own UI
     if (el.id && EXT_ROOTS.test(el.id)) continue; // skip other extensions' roots
     if (el.closest && el.closest(CHROME_SEL)) continue; // skip site header/nav/footer
+    if (!isVisible(el, win)) continue; // never target hidden elements
     if (requireText) {
       const text = (el.textContent || "").trim();
       if (!text || text.length > 800 || !WALL_TEXT.test(text)) continue;
+      if (!isWallSized(el, win)) continue; // skip small things (buttons, links)
     }
     const s = scorePopupCandidate(el);
     if (s > bestScore) { bestScore = s; best = el; }

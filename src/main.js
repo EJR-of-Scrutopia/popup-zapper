@@ -8,6 +8,7 @@ import { createActivityLog } from "./lib/log.js";
 import { collectDiagnostics } from "./lib/diagnostics.js";
 import { findPaywallHosts, buildUblockFilters } from "./lib/paywall-filters.js";
 import { resetMeter } from "./lib/meter.js";
+import { captureSnapshot, restoreSnapshot } from "./lib/freeze.js";
 import {
   createControlMenu, createActivityPanel, createLearnerToolbar, createManagePanel,
   createFilterPanel,
@@ -67,6 +68,19 @@ function installReloadDefense() {
 // ---- blocker engine ----
 function runOnce() {
   runBlocker({ doc: document, library, hostname, log: (a, d) => activityLog.add(a, d) });
+  runFreeze();
+}
+
+// Keep-content: save the fullest version, restore it if the page got gated.
+function runFreeze() {
+  const dom = (library.domains || {})[hostname];
+  if (!dom || !dom.freeze) return;
+  try {
+    captureSnapshot(document, window.sessionStorage);
+    if (restoreSnapshot(document, window.sessionStorage)) {
+      activityLog.add("keep", "restored saved full content");
+    }
+  } catch { /* ignore */ }
 }
 
 function startObserver() {
@@ -241,6 +255,33 @@ function toggleResetMeter() {
   if (dom.resetMeter) maybeResetMeter();
 }
 
+function toggleFreeze() {
+  const dom = domainEntry();
+  dom.freeze = !dom.freeze;
+  persist();
+  activityLog.add("keep", dom.freeze ? "keep-content enabled on this site" : "keep-content disabled");
+  refreshControl(true);
+  runFreeze();
+}
+
+function saveContentNow() {
+  try {
+    const ok = captureSnapshot(document, window.sessionStorage, true);
+    activityLog.add("keep", ok ? "saved content snapshot (manual)" : "nothing substantial to save");
+    alert(ok
+      ? "Popup Zapper: content saved. If the page reloads to a blocked version, use 'Restore content'."
+      : "Popup Zapper: nothing substantial to save on this page yet.");
+  } catch { /* ignore */ }
+}
+
+function restoreContentNow() {
+  try {
+    const ok = restoreSnapshot(document, window.sessionStorage, true);
+    activityLog.add("keep", ok ? "restored content snapshot (manual)" : "no saved content for this page");
+    alert(ok ? "Popup Zapper: restored saved content." : "Popup Zapper: no saved content for this page.");
+  } catch { /* ignore */ }
+}
+
 // Wipe the gate's counter before the site's scripts read it, so this load looks
 // like a fresh visit. Runs at document-start when enabled for the domain.
 function maybeResetMeter() {
@@ -259,12 +300,15 @@ function refreshControl(open) {
     enabled: !library.disabledDomains.includes(hostname),
     autozap: !!(dom && dom.autozap),
     resetMeter: !!(dom && dom.resetMeter),
+    freeze: !!(dom && dom.freeze),
     hostname,
     open: !!open,
     onLearn: startLearner,
     onManage: toggleManage,
     onToggleAutozap: toggleAutozap,
     onToggleResetMeter: toggleResetMeter,
+    onToggleFreeze: toggleFreeze,
+    onRestoreContent: restoreContentNow,
     onToggleSite: toggleSite,
     onShowLog: toggleLog,
     onDiagnostics: copyDiagnostics,
@@ -279,6 +323,9 @@ try {
   GM_registerMenuCommand("Manage rules", toggleManage);
   GM_registerMenuCommand("Toggle auto-zap (this site)", toggleAutozap);
   GM_registerMenuCommand("Toggle reset-meter (this site)", toggleResetMeter);
+  GM_registerMenuCommand("Toggle keep-content (this site)", toggleFreeze);
+  GM_registerMenuCommand("Save content snapshot now", saveContentNow);
+  GM_registerMenuCommand("Restore content snapshot", restoreContentNow);
   GM_registerMenuCommand("Show activity log", toggleLog);
   GM_registerMenuCommand("Freeze auth (block paywall via uBlock)", freezeAuth);
   GM_registerMenuCommand("Copy page diagnostics (debug)", copyDiagnostics);

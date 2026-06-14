@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Popup Zapper
 // @namespace    https://github.com/param/popup-zapper
-// @version      1.5.1
+// @version      1.6.0
 // @description  Remove login/consent/newsletter/paywall popups, restore blurred content, defeat reload traps, auto-zap overlays, and learn new popups by click.
 // @author       Param
 // @match        *://*/*
@@ -212,17 +212,44 @@
     if (WALL_TEXT.test(el.textContent || "")) score += 2;
     return score;
   }
+  function isVisible(el, win) {
+    let cs;
+    try {
+      cs = win.getComputedStyle(el);
+    } catch {
+      return true;
+    }
+    if (cs.display === "none" || cs.visibility === "hidden" || cs.visibility === "collapse") return false;
+    if (parseFloat(cs.opacity || "1") < 0.05) return false;
+    return true;
+  }
+  function isWallSized(el, win) {
+    let rect;
+    try {
+      rect = el.getBoundingClientRect();
+    } catch {
+      return true;
+    }
+    const area = rect.width * rect.height;
+    if (area <= 0) return true;
+    const vw = win.innerWidth || 1024;
+    const vh = win.innerHeight || 768;
+    return area >= vw * vh * 0.12;
+  }
   function findBestGuess(doc, opts = {}) {
     const requireText = !!opts.requireText;
+    const win = doc.defaultView || window;
     let best = null;
     let bestScore = MIN_SCORE - 1;
     for (const el of doc.body.querySelectorAll("*")) {
       if (el.closest && el.closest("[data-pz]")) continue;
       if (el.id && EXT_ROOTS.test(el.id)) continue;
       if (el.closest && el.closest(CHROME_SEL)) continue;
+      if (!isVisible(el, win)) continue;
       if (requireText) {
         const text = (el.textContent || "").trim();
         if (!text || text.length > 800 || !WALL_TEXT.test(text)) continue;
+        if (!isWallSized(el, win)) continue;
       }
       const s = scorePopupCandidate(el);
       if (s > bestScore) {
@@ -719,8 +746,85 @@ Blurred elements: ${blurred.length}`);
     return cleared;
   }
 
+  // src/lib/freeze.js
+  var PREFIX = "pzFreeze:";
+  var MIN_TEXT = 400;
+  var CONTENT_SELECTORS = [
+    "article",
+    "main",
+    "[role=main]",
+    ".article-body",
+    ".article__body",
+    ".post-content",
+    ".entry-content",
+    "#content",
+    "#main"
+  ];
+  function keyFor(doc) {
+    return PREFIX + (doc.location && doc.location.pathname || "/");
+  }
+  function pickContent(doc) {
+    for (const sel of CONTENT_SELECTORS) {
+      let best = null, bestLen = 0;
+      for (const el of doc.querySelectorAll(sel)) {
+        const len = (el.textContent || "").trim().length;
+        if (len > bestLen) {
+          bestLen = len;
+          best = el;
+        }
+      }
+      if (best && bestLen >= MIN_TEXT) return { el: best, sel };
+    }
+    if (doc.body) return { el: doc.body, sel: "body" };
+    return null;
+  }
+  function captureSnapshot(doc, store, force) {
+    const picked = pickContent(doc);
+    if (!picked) return false;
+    const text = (picked.el.textContent || "").trim();
+    if (!force && text.length < MIN_TEXT) return false;
+    const key = keyFor(doc);
+    if (!force) {
+      let prev = 0;
+      try {
+        const p = JSON.parse(store.getItem(key) || "null");
+        prev = p ? p.len : 0;
+      } catch {
+      }
+      if (text.length <= prev) return false;
+    }
+    try {
+      store.setItem(key, JSON.stringify({ sel: picked.sel, html: picked.el.innerHTML, len: text.length }));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  function restoreSnapshot(doc, store, force) {
+    const key = keyFor(doc);
+    let snap;
+    try {
+      snap = JSON.parse(store.getItem(key) || "null");
+    } catch {
+      return false;
+    }
+    if (!snap || !snap.html) return false;
+    let el;
+    try {
+      el = doc.querySelector(snap.sel);
+    } catch {
+      el = null;
+    }
+    if (!el) el = doc.body;
+    if (!el) return false;
+    const curLen = (el.textContent || "").trim().length;
+    if (!force && curLen >= snap.len * 0.6) return false;
+    el.innerHTML = snap.html;
+    return true;
+  }
+
   // src/lib/ui.js
-  var PREFIX = "pz-";
+  var PREFIX2 = "pz-";
   function tag(name, props = {}, children = []) {
     const el = document.createElement(name);
     Object.assign(el, props);
@@ -735,18 +839,21 @@ Blurred elements: ${blurred.length}`);
     enabled,
     autozap,
     resetMeter: resetMeter2,
+    freeze,
     hostname: hostname2,
     open,
     onLearn,
     onManage,
     onToggleAutozap,
     onToggleResetMeter,
+    onToggleFreeze,
+    onRestoreContent,
     onToggleSite,
     onShowLog,
     onDiagnostics,
     onFreeze
   }) {
-    const wrap = own(tag("div", { className: PREFIX + "control" }), "control");
+    const wrap = own(tag("div", { className: PREFIX2 + "control" }), "control");
     wrap.style.cssText = "position:fixed;bottom:12px;right:12px;z-index:2147483647;font:12px sans-serif;";
     const badge = tag("button", {
       textContent: enabled ? "\u26A1 Zapper: ON" : "\u26A1 Zapper: OFF",
@@ -795,6 +902,10 @@ Blurred elements: ${blurred.length}`);
     if (onToggleResetMeter) {
       item("meter", `\u{1F36A} Reset meter: ${resetMeter2 ? "ON" : "OFF"}  \u2014  tap to turn ${resetMeter2 ? "off" : "on"}`, onToggleResetMeter);
     }
+    if (onToggleFreeze) {
+      item("keep", `\u{1F4BE} Keep content: ${freeze ? "ON" : "OFF"}  \u2014  tap to turn ${freeze ? "off" : "on"}`, onToggleFreeze);
+    }
+    if (onRestoreContent) item("restore", "\u21A9\uFE0F Restore saved content", onRestoreContent);
     if (onFreeze) item("freeze", "\u{1F9CA} Freeze auth (block paywall)", onFreeze);
     item("learn", "\u{1F3AF} Learn a popup", onLearn);
     item("manage", "\u{1F4CB} Manage rules", onManage);
@@ -808,7 +919,7 @@ Blurred elements: ${blurred.length}`);
     return wrap;
   }
   function createFilterPanel({ filters, hosts, copied, onClose }) {
-    const panel2 = own(tag("div", { className: PREFIX + "filters" }), "filters");
+    const panel2 = own(tag("div", { className: PREFIX2 + "filters" }), "filters");
     panel2.style.cssText = "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:2147483647;background:#fff;color:#111;padding:16px;border-radius:10px;width:440px;max-width:92vw;font:13px sans-serif;box-shadow:0 4px 24px rgba(0,0,0,.5);";
     const head = tag("div");
     head.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;";
@@ -841,7 +952,7 @@ Blurred elements: ${blurred.length}`);
     return panel2;
   }
   function createActivityPanel({ entries, onClear, onClose }) {
-    const panel2 = own(tag("div", { className: PREFIX + "log" }), "log");
+    const panel2 = own(tag("div", { className: PREFIX2 + "log" }), "log");
     panel2.style.cssText = "position:fixed;bottom:54px;right:12px;z-index:2147483647;background:#111;color:#eee;padding:10px;border-radius:8px;font:11px/1.5 monospace;max-height:50vh;width:340px;overflow:auto;box-shadow:0 2px 12px rgba(0,0,0,.5);";
     const head = tag("div");
     head.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;";
@@ -880,7 +991,7 @@ Blurred elements: ${blurred.length}`);
       b.style.cssText = "margin:0 4px;padding:4px 8px;font:12px sans-serif;cursor:pointer;";
       return b;
     };
-    const bar = own(tag("div", { className: PREFIX + "toolbar" }, [
+    const bar = own(tag("div", { className: PREFIX2 + "toolbar" }, [
       tag("span", { textContent: "Popup? " }),
       mk("confirm", "\u2713 Yes"),
       mk("pick", "Click the right one"),
@@ -893,7 +1004,7 @@ Blurred elements: ${blurred.length}`);
     return bar;
   }
   function createManagePanel({ library: library2, hostname: hostname2, onDelete, onPromote }) {
-    const panel2 = own(tag("div", { className: PREFIX + "panel" }), "panel");
+    const panel2 = own(tag("div", { className: PREFIX2 + "panel" }), "panel");
     panel2.style.cssText = "position:fixed;top:40px;right:12px;z-index:2147483647;background:#fff;color:#111;padding:12px;border-radius:8px;font:13px sans-serif;max-height:70vh;overflow:auto;box-shadow:0 2px 12px rgba(0,0,0,.3);min-width:280px;";
     const rows = [];
     const addRow = (rule, scope) => {
@@ -971,6 +1082,18 @@ Blurred elements: ${blurred.length}`);
   }
   function runOnce() {
     runBlocker({ doc: document, library, hostname, log: (a, d) => activityLog.add(a, d) });
+    runFreeze();
+  }
+  function runFreeze() {
+    const dom = (library.domains || {})[hostname];
+    if (!dom || !dom.freeze) return;
+    try {
+      captureSnapshot(document, window.sessionStorage);
+      if (restoreSnapshot(document, window.sessionStorage)) {
+        activityLog.add("keep", "restored saved full content");
+      }
+    } catch {
+    }
   }
   function startObserver() {
     let pending = false;
@@ -1164,6 +1287,30 @@ Blurred elements: ${blurred.length}`);
     refreshControl(true);
     if (dom.resetMeter) maybeResetMeter();
   }
+  function toggleFreeze() {
+    const dom = domainEntry();
+    dom.freeze = !dom.freeze;
+    persist();
+    activityLog.add("keep", dom.freeze ? "keep-content enabled on this site" : "keep-content disabled");
+    refreshControl(true);
+    runFreeze();
+  }
+  function saveContentNow() {
+    try {
+      const ok = captureSnapshot(document, window.sessionStorage, true);
+      activityLog.add("keep", ok ? "saved content snapshot (manual)" : "nothing substantial to save");
+      alert(ok ? "Popup Zapper: content saved. If the page reloads to a blocked version, use 'Restore content'." : "Popup Zapper: nothing substantial to save on this page yet.");
+    } catch {
+    }
+  }
+  function restoreContentNow() {
+    try {
+      const ok = restoreSnapshot(document, window.sessionStorage, true);
+      activityLog.add("keep", ok ? "restored content snapshot (manual)" : "no saved content for this page");
+      alert(ok ? "Popup Zapper: restored saved content." : "Popup Zapper: no saved content for this page.");
+    } catch {
+    }
+  }
   function maybeResetMeter() {
     const dom = (library.domains || {})[hostname];
     if (!dom || !dom.resetMeter) return;
@@ -1178,12 +1325,15 @@ Blurred elements: ${blurred.length}`);
       enabled: !library.disabledDomains.includes(hostname),
       autozap: !!(dom && dom.autozap),
       resetMeter: !!(dom && dom.resetMeter),
+      freeze: !!(dom && dom.freeze),
       hostname,
       open: !!open,
       onLearn: startLearner,
       onManage: toggleManage,
       onToggleAutozap: toggleAutozap,
       onToggleResetMeter: toggleResetMeter,
+      onToggleFreeze: toggleFreeze,
+      onRestoreContent: restoreContentNow,
       onToggleSite: toggleSite,
       onShowLog: toggleLog,
       onDiagnostics: copyDiagnostics,
@@ -1196,6 +1346,9 @@ Blurred elements: ${blurred.length}`);
     GM_registerMenuCommand("Manage rules", toggleManage);
     GM_registerMenuCommand("Toggle auto-zap (this site)", toggleAutozap);
     GM_registerMenuCommand("Toggle reset-meter (this site)", toggleResetMeter);
+    GM_registerMenuCommand("Toggle keep-content (this site)", toggleFreeze);
+    GM_registerMenuCommand("Save content snapshot now", saveContentNow);
+    GM_registerMenuCommand("Restore content snapshot", restoreContentNow);
     GM_registerMenuCommand("Show activity log", toggleLog);
     GM_registerMenuCommand("Freeze auth (block paywall via uBlock)", freezeAuth);
     GM_registerMenuCommand("Copy page diagnostics (debug)", copyDiagnostics);
