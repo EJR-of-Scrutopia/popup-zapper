@@ -1,16 +1,53 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { createBadge, createLearnerToolbar, createManagePanel } from "../src/lib/ui.js";
+import {
+  createControlMenu, createActivityPanel, createLearnerToolbar, createManagePanel,
+} from "../src/lib/ui.js";
 
 beforeEach(() => { document.body.innerHTML = ""; });
 
-describe("createBadge", () => {
-  it("shows enabled/disabled state and toggles on click", () => {
-    const onToggle = vi.fn();
-    const badge = createBadge({ enabled: true, onToggle });
-    document.body.appendChild(badge);
-    expect(badge.textContent).toMatch(/on/i);
-    badge.click();
-    expect(onToggle).toHaveBeenCalledOnce();
+describe("createControlMenu", () => {
+  it("renders actions and fires their handlers", () => {
+    const h = {
+      onLearn: vi.fn(), onManage: vi.fn(), onToggleAutozap: vi.fn(),
+      onToggleSite: vi.fn(), onShowLog: vi.fn(),
+    };
+    const ctrl = createControlMenu({ enabled: true, autozap: false, ...h });
+    document.body.appendChild(ctrl);
+    ctrl.querySelector("[data-act='menu']").click(); // open
+    ctrl.querySelector("[data-act='learn']").click();
+    ctrl.querySelector("[data-act='manage']").click();
+    ctrl.querySelector("[data-act='autozap']").click();
+    ctrl.querySelector("[data-act='log']").click();
+    ctrl.querySelector("[data-act='site']").click();
+    expect(h.onLearn).toHaveBeenCalledOnce();
+    expect(h.onManage).toHaveBeenCalledOnce();
+    expect(h.onToggleAutozap).toHaveBeenCalledOnce();
+    expect(h.onShowLog).toHaveBeenCalledOnce();
+    expect(h.onToggleSite).toHaveBeenCalledOnce();
+  });
+
+  it("reflects disabled state in the badge label", () => {
+    const ctrl = createControlMenu({ enabled: false, autozap: false });
+    expect(ctrl.querySelector("[data-act='menu']").textContent).toMatch(/off/i);
+  });
+});
+
+describe("createActivityPanel", () => {
+  it("lists entries and fires clear/close", () => {
+    const onClear = vi.fn(), onClose = vi.fn();
+    const entries = [{ t: Date.now(), action: "popup", detail: "removed div#gate" }];
+    const panel = createActivityPanel({ entries, onClear, onClose });
+    document.body.appendChild(panel);
+    expect(panel.textContent).toContain("removed div#gate");
+    panel.querySelector("[data-act='clear']").click();
+    panel.querySelector("[data-act='close']").click();
+    expect(onClear).toHaveBeenCalledOnce();
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("shows a helpful message when empty", () => {
+    const panel = createActivityPanel({ entries: [], onClear() {}, onClose() {} });
+    expect(panel.textContent).toMatch(/nothing yet/i);
   });
 });
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { detectDegradation, restoreElement, restorePage } from "../src/lib/restore.js";
+import { detectDegradation, restoreElement, restorePage, restoreBlur } from "../src/lib/restore.js";
 
 beforeEach(() => {
   document.documentElement.removeAttribute("style");
@@ -37,6 +37,19 @@ describe("restoreElement", () => {
     expect(d.style.filter).toBe("none");
     expect(d.style.opacity).toBe("1");
     expect(d.style.pointerEvents).toBe("auto");
+  });
+});
+
+describe("restoreBlur", () => {
+  it("strips blur and returns the count, respecting the whitelist", () => {
+    document.body.innerHTML =
+      `<div id="a" style="filter:blur(5px)"></div>` +
+      `<div id="b" style="filter:blur(5px)"></div>` +
+      `<div id="c"></div>`;
+    const n = restoreBlur(document, (el) => el.id === "b");
+    expect(document.getElementById("a").style.filter).toBe("none");
+    expect(document.getElementById("b").style.filter).toBe("blur(5px)"); // whitelisted
+    expect(n).toBe(1);
   });
 });
 

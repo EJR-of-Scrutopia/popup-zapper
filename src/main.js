@@ -4,7 +4,10 @@ import { createReloadGuard } from "./lib/reload-guard.js";
 import { findBestGuess } from "./lib/learner.js";
 import { extractKeywords } from "./lib/extract.js";
 import { detectDegradation } from "./lib/restore.js";
-import { createBadge, createLearnerToolbar, createManagePanel } from "./lib/ui.js";
+import { createActivityLog } from "./lib/log.js";
+import {
+  createControlMenu, createActivityPanel, createLearnerToolbar, createManagePanel,
+} from "./lib/ui.js";
 
 const getV = (k) => GM_getValue(k);
 const setV = (k, v) => GM_setValue(k, v);
@@ -12,6 +15,11 @@ const hostname = location.hostname.replace(/^www\./, "");
 
 let library = loadLibrary(getV);
 const persist = () => saveLibrary(setV, library);
+const activityLog = createActivityLog();
+
+function domainEntry() {
+  return (library.domains[hostname] = library.domains[hostname] || { rules: [], restore: {} });
+}
 
 // ---- interaction tracking for the reload guard ----
 let lastInteraction = 0;
@@ -31,19 +39,21 @@ function installReloadDefense() {
   try {
     Location.prototype.reload = function (...args) {
       if (guard.allowReload()) return origReload.apply(this, args);
+      activityLog.add("reload", "blocked an automatic page reload");
     };
   } catch { /* some browsers lock this; ignore */ }
 
   const origAssign = Location.prototype.assign;
   Location.prototype.assign = function (url) {
     if (guard.allowReload()) return origAssign.call(this, url);
+    activityLog.add("reload", "blocked an automatic redirect");
   };
   const origReplace = Location.prototype.replace;
   Location.prototype.replace = function (url) {
     if (guard.allowReload()) return origReplace.call(this, url);
+    activityLog.add("reload", "blocked an automatic redirect");
   };
 
-  // strip meta refresh as soon as the head exists
   const stripMeta = () => {
     document.querySelectorAll("meta[http-equiv='refresh' i]").forEach((m) => m.remove());
   };
@@ -51,7 +61,9 @@ function installReloadDefense() {
 }
 
 // ---- blocker engine ----
-function runOnce() { runBlocker({ doc: document, library, hostname }); }
+function runOnce() {
+  runBlocker({ doc: document, library, hostname, log: (a, d) => activityLog.add(a, d) });
+}
 
 function startObserver() {
   let pending = false;
@@ -88,12 +100,14 @@ function startLearner() {
     if (!el) return cleanup();
     const kws = extractKeywords(el);
     if (kws.length) {
-      const dom = (library.domains[hostname] = library.domains[hostname] || { rules: [], restore: {} });
+      const dom = domainEntry();
       dom.rules.push(...kws);
-      const deg = detectDegradation(el);
-      dom.restore = { ...dom.restore, ...deg };
+      dom.restore = { ...dom.restore, ...detectDegradation(el) };
       persist();
+      activityLog.add("learn", `saved ${kws.length} rule(s) from ${el.tagName.toLowerCase()}`);
       runOnce();
+    } else {
+      activityLog.add("learn", "could not extract a stable keyword from that element");
     }
     cleanup();
   };
@@ -137,48 +151,70 @@ function toggleManage() {
   document.body.appendChild(panel);
 }
 
-// ---- master toggle ----
+// ---- activity log panel ----
+let logPanel = null;
+let logUnsub = null;
+function renderLogPanel() {
+  if (logPanel) logPanel.remove();
+  logPanel = createActivityPanel({
+    entries: activityLog.entries(),
+    onClear: () => activityLog.clear(),
+    onClose: () => { closeLog(); },
+  });
+  document.body.appendChild(logPanel);
+}
+function closeLog() {
+  if (logUnsub) { logUnsub(); logUnsub = null; }
+  if (logPanel) { logPanel.remove(); logPanel = null; }
+}
+function toggleLog() {
+  if (logPanel) { closeLog(); return; }
+  renderLogPanel();
+  logUnsub = activityLog.subscribe(() => { if (logPanel) renderLogPanel(); });
+}
+
+// ---- toggles ----
 function toggleSite() {
   const i = library.disabledDomains.indexOf(hostname);
   if (i >= 0) library.disabledDomains.splice(i, 1);
   else library.disabledDomains.push(hostname);
   persist();
-  refreshBadge();
+  refreshControl();
 }
 
-function toggleCleanup() {
-  const dom = (library.domains[hostname] = library.domains[hostname] || { rules: [], restore: {} });
-  dom.cleanup = !dom.cleanup;
+function toggleAutozap() {
+  const dom = domainEntry();
+  dom.autozap = !dom.autozap;
   persist();
+  activityLog.add("autozap", dom.autozap ? "enabled on this site" : "disabled on this site");
+  refreshControl();
   runOnce();
 }
 
-let badge = null;
-function refreshBadge() {
-  if (badge) badge.remove();
-  badge = createBadge({
+// ---- control menu ----
+let control = null;
+function refreshControl() {
+  if (control) control.remove();
+  const dom = (library.domains || {})[hostname];
+  control = createControlMenu({
     enabled: !library.disabledDomains.includes(hostname),
-    onToggle: toggleSite,
+    autozap: !!(dom && dom.autozap),
+    onLearn: startLearner,
+    onManage: toggleManage,
+    onToggleAutozap: toggleAutozap,
+    onToggleSite: toggleSite,
+    onShowLog: toggleLog,
   });
-  document.body.appendChild(badge);
+  document.body.appendChild(control);
 }
 
-// ---- hotkeys ----
-window.addEventListener("keydown", (e) => {
-  if (!e.altKey || !e.shiftKey) return;
-  const k = e.key.toLowerCase();
-  if (k === "p") { e.preventDefault(); startLearner(); }
-  else if (k === "m") { e.preventDefault(); toggleManage(); }
-  else if (k === "z") { e.preventDefault(); toggleSite(); }
-  else if (k === "c") { e.preventDefault(); toggleCleanup(); }
-}, true);
-
-// ---- GM menu commands (fallback for hotkeys) ----
+// ---- GM menu commands (extension-menu fallback for the on-page menu) ----
 try {
-  GM_registerMenuCommand("Learn a popup (Alt+Shift+P)", startLearner);
-  GM_registerMenuCommand("Manage rules (Alt+Shift+M)", toggleManage);
-  GM_registerMenuCommand("Toggle on this site (Alt+Shift+Z)", toggleSite);
-  GM_registerMenuCommand("Toggle tracker cleanup here (Alt+Shift+C)", toggleCleanup);
+  GM_registerMenuCommand("Learn a popup", startLearner);
+  GM_registerMenuCommand("Manage rules", toggleManage);
+  GM_registerMenuCommand("Toggle auto-zap (this site)", toggleAutozap);
+  GM_registerMenuCommand("Show activity log", toggleLog);
+  GM_registerMenuCommand("Toggle zapper (this site)", toggleSite);
 } catch { /* not available in all managers */ }
 
 // ---- boot ----
@@ -186,7 +222,7 @@ installReloadDefense();
 function boot() {
   runOnce();
   startObserver();
-  refreshBadge();
+  refreshControl();
 }
 if (document.body) boot();
 else document.addEventListener("DOMContentLoaded", boot, { once: true });

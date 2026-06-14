@@ -9,17 +9,29 @@ new popups by click.
 
 ## Install
 
-1. Install the **Violentmonkey** extension in Brave.
-2. Run `npm install && npm run build`.
-3. Open `dist/popup-zapper.user.js` in Brave and confirm the Violentmonkey install
-   prompt (or drag the file into the Violentmonkey dashboard).
+1. Install **Violentmonkey** (or **Tampermonkey**) in Brave.
+2. Build the script: `npm install && npm run build` (or use the prebuilt
+   `dist/popup-zapper.user.js` from the repo).
+3. Open the manager's **Dashboard** and drag `dist/popup-zapper.user.js` onto it,
+   then confirm the install.
 
-## Hotkeys
+## Controls
 
-- `Alt+Shift+P` — learn a popup (guess shown; click the right element to correct)
-- `Alt+Shift+M` — manage rules (delete, promote site rule to global)
-- `Alt+Shift+Z` — toggle the zapper on the current site
-- `Alt+Shift+C` — toggle post-consent tracker cleanup on the current site (off by default)
+All actions are in the **⚡ Zapper** badge menu (bottom-right of every page), and
+also in the userscript manager's extension menu. No keyboard shortcuts are used,
+to avoid clashing with Brave's built-in shortcuts.
+
+- **Learn a popup** — outlines its best guess; click the real popup to correct, and
+  the keyword is saved for this site.
+- **Manage rules** — delete a rule, or promote a per-site rule to global.
+- **Auto-zap (this site)** — auto-remove the highest-scoring overlay on load, no
+  learning needed. Off by default; heuristic, so check the activity log.
+- **Activity log** — live view of what was removed, de-blurred, rejected, or blocked
+  (and a hint when nothing matched).
+- **Disable on this site** — per-site on/off switch.
+
+Tracker cleanup (delete analytics cookies/storage after consent) can be toggled per
+site from the userscript manager's extension menu.
 
 ## Develop
 

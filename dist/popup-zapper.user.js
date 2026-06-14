@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Popup Zapper
 // @namespace    https://github.com/param/popup-zapper
-// @version      1.0.0
-// @description  Remove login/consent/newsletter/paywall popups, restore blurred content, defeat reload traps, and learn new popups by click.
+// @version      1.1.0
+// @description  Remove login/consent/newsletter/paywall popups, restore blurred content, defeat reload traps, auto-zap overlays, and learn new popups by click.
 // @author       Param
 // @match        *://*/*
 // @run-at       document-start
@@ -123,6 +123,28 @@
     el.style.setProperty("user-select", "auto", "important");
     el.style.removeProperty("max-height");
   }
+  function restoreBlur(doc, isWhitelisted2) {
+    const win = doc.defaultView || window;
+    let count = 0;
+    for (const el of doc.body.querySelectorAll("*")) {
+      if (isWhitelisted2 && isWhitelisted2(el)) continue;
+      let cs;
+      try {
+        cs = win.getComputedStyle(el);
+      } catch {
+        continue;
+      }
+      const f = cs.filter || "";
+      const b = cs.backdropFilter || cs.webkitBackdropFilter || "";
+      if (/blur\(/i.test(f) || /blur\(/i.test(b)) {
+        el.style.setProperty("filter", "none", "important");
+        el.style.setProperty("backdrop-filter", "none", "important");
+        el.style.setProperty("-webkit-backdrop-filter", "none", "important");
+        count++;
+      }
+    }
+    return count;
+  }
   function restorePage(doc) {
     const html = doc.documentElement;
     const body = doc.body;
@@ -164,6 +186,40 @@
       if (REJECT_PATTERNS.some((re) => re.test(label))) return node;
     }
     return null;
+  }
+
+  // src/lib/learner.js
+  var WALL_TEXT = /sign ?in|log ?in|subscribe|sign ?up|register|cookie|consent|create (an )?account|continue reading/i;
+  var MIN_SCORE = 3;
+  function scorePopupCandidate(el) {
+    if (!el || el.nodeType !== 1) return 0;
+    const view = el.ownerDocument.defaultView || window;
+    const cs = view.getComputedStyle(el);
+    let score = 0;
+    const pos = el.style.position || cs.position;
+    if (pos === "fixed" || pos === "sticky") score += 3;
+    if (pos === "absolute") score += 1;
+    const z = parseInt(el.style.zIndex || cs.zIndex, 10);
+    if (!Number.isNaN(z)) {
+      if (z >= 1e3) score += 3;
+      else if (z > 0) score += 1;
+    }
+    const filter = el.style.filter || cs.filter || "";
+    if (/blur\(/i.test(filter)) score += 1;
+    if (WALL_TEXT.test(el.textContent || "")) score += 2;
+    return score;
+  }
+  function findBestGuess(doc) {
+    let best = null;
+    let bestScore = MIN_SCORE - 1;
+    for (const el of doc.body.querySelectorAll("*")) {
+      const s = scorePopupCandidate(el);
+      if (s > bestScore) {
+        bestScore = s;
+        best = el;
+      }
+    }
+    return bestScore >= MIN_SCORE ? best : null;
   }
 
   // src/lib/cleanup.js
@@ -221,7 +277,12 @@
   function isWhitelisted(el, whitelist) {
     return (whitelist || []).some((rule) => matchesRule(el, rule));
   }
-  function consentPass(doc) {
+  function describe(el) {
+    const id = el.id ? `#${el.id}` : "";
+    const cls = el.classList && el.classList.length ? "." + [...el.classList].slice(0, 2).join(".") : "";
+    return `${el.tagName.toLowerCase()}${id}${cls}`;
+  }
+  function consentPass(doc, log) {
     for (const sel of CMP_SELECTORS) {
       let banner;
       try {
@@ -233,44 +294,70 @@
       const reject = findRejectButton(banner);
       if (reject) {
         safe(() => reject.click());
+        log("consent", `clicked reject in ${describe(banner)}`);
         return;
       }
       safe(() => banner.remove());
+      log("consent", `hid banner ${describe(banner)}`);
     }
   }
-  function popupPass(doc, rules, whitelist) {
+  function popupPass(doc, rules, whitelist, log) {
     const matches = findMatches(doc.body, rules);
     for (const el of matches) {
       if (isWhitelisted(el, whitelist)) continue;
+      const desc = describe(el);
       safe(() => el.remove());
+      log("popup", `removed ${desc} (matched rule)`);
     }
   }
-  function restorePass(doc, rules, whitelist) {
+  function autozapPass(doc, whitelist, log) {
+    const guess = findBestGuess(doc);
+    if (!guess) return;
+    if (isWhitelisted(guess, whitelist)) return;
+    const desc = describe(guess);
+    safe(() => guess.remove());
+    log("autozap", `auto-removed ${desc}`);
+  }
+  function restorePass(doc, whitelist, log) {
     restorePage(doc);
     for (const el of doc.body.querySelectorAll("*")) {
       if (isWhitelisted(el, whitelist)) continue;
       const style = el.getAttribute && el.getAttribute("style");
-      if (style && /blur\(|pointer-events\s*:\s*none|opacity\s*:\s*0/i.test(style)) {
+      if (style && /pointer-events\s*:\s*none|opacity\s*:\s*0/i.test(style)) {
         safe(() => restoreElement(el));
       }
     }
+    const n = safeVal(() => restoreBlur(doc, (el) => isWhitelisted(el, whitelist)), 0);
+    if (n) log("deblur", `removed blur from ${n} element(s)`);
   }
-  function runBlocker({ doc, library: library2, hostname: hostname2 }) {
+  function runBlocker({ doc, library: library2, hostname: hostname2, log = () => {
+  } }) {
     if (!library2.enabled) return;
     if ((library2.disabledDomains || []).includes(hostname2)) return;
     const rules = getActiveRules(library2, hostname2);
-    safe(() => consentPass(doc));
     const domain = (library2.domains || {})[hostname2];
+    safe(() => consentPass(doc, log));
     if (domain && domain.cleanup) {
       safe(() => runCleanup(doc, doc.defaultView));
+      log("cleanup", "cleared tracking cookies/storage");
     }
-    safe(() => popupPass(doc, rules, library2.whitelist));
-    safe(() => restorePass(doc, rules, library2.whitelist));
+    safe(() => popupPass(doc, rules, library2.whitelist, log));
+    if (domain && domain.autozap) {
+      safe(() => autozapPass(doc, library2.whitelist, log));
+    }
+    safe(() => restorePass(doc, library2.whitelist, log));
   }
   function safe(fn) {
     try {
       fn();
     } catch {
+    }
+  }
+  function safeVal(fn, fallback) {
+    try {
+      return fn();
+    } catch {
+      return fallback;
     }
   }
 
@@ -313,40 +400,6 @@
     };
   }
 
-  // src/lib/learner.js
-  var WALL_TEXT = /sign ?in|log ?in|subscribe|sign ?up|register|cookie|consent|create (an )?account|continue reading/i;
-  var MIN_SCORE = 3;
-  function scorePopupCandidate(el) {
-    if (!el || el.nodeType !== 1) return 0;
-    const view = el.ownerDocument.defaultView || window;
-    const cs = view.getComputedStyle(el);
-    let score = 0;
-    const pos = el.style.position || cs.position;
-    if (pos === "fixed" || pos === "sticky") score += 3;
-    if (pos === "absolute") score += 1;
-    const z = parseInt(el.style.zIndex || cs.zIndex, 10);
-    if (!Number.isNaN(z)) {
-      if (z >= 1e3) score += 3;
-      else if (z > 0) score += 1;
-    }
-    const filter = el.style.filter || cs.filter || "";
-    if (/blur\(/i.test(filter)) score += 1;
-    if (WALL_TEXT.test(el.textContent || "")) score += 2;
-    return score;
-  }
-  function findBestGuess(doc) {
-    let best = null;
-    let bestScore = MIN_SCORE - 1;
-    for (const el of doc.body.querySelectorAll("*")) {
-      const s = scorePopupCandidate(el);
-      if (s > bestScore) {
-        bestScore = s;
-        best = el;
-      }
-    }
-    return bestScore >= MIN_SCORE ? best : null;
-  }
-
   // src/lib/extract.js
   var MAX_TEXT_LEN = 40;
   function isHashedToken(token) {
@@ -379,6 +432,38 @@
     return out;
   }
 
+  // src/lib/log.js
+  function createActivityLog(max = 200) {
+    const entries = [];
+    const listeners = /* @__PURE__ */ new Set();
+    const notify = () => {
+      for (const fn of listeners) {
+        try {
+          fn(entries);
+        } catch {
+        }
+      }
+    };
+    return {
+      add(action, detail) {
+        entries.push({ t: Date.now(), action, detail: detail || "" });
+        if (entries.length > max) entries.shift();
+        notify();
+      },
+      entries() {
+        return entries.slice();
+      },
+      clear() {
+        entries.length = 0;
+        notify();
+      },
+      subscribe(fn) {
+        listeners.add(fn);
+        return () => listeners.delete(fn);
+      }
+    };
+  }
+
   // src/lib/ui.js
   var PREFIX = "pz-";
   function tag(name, props = {}, children = []) {
@@ -387,15 +472,82 @@
     for (const c of children) el.appendChild(c);
     return el;
   }
-  function createBadge({ enabled, onToggle }) {
-    const badge2 = tag("button", {
-      className: PREFIX + "badge",
-      textContent: enabled ? "Zapper: ON" : "Zapper: OFF",
-      title: "Toggle Popup Zapper on this site"
+  function createControlMenu({
+    enabled,
+    autozap,
+    onLearn,
+    onManage,
+    onToggleAutozap,
+    onToggleSite,
+    onShowLog
+  }) {
+    const wrap = tag("div", { className: PREFIX + "control" });
+    wrap.style.cssText = "position:fixed;bottom:12px;right:12px;z-index:2147483647;font:12px sans-serif;";
+    const badge = tag("button", {
+      textContent: enabled ? "\u26A1 Zapper" : "\u26A1 Zapper (off)",
+      title: "Popup Zapper menu"
     });
-    badge2.style.cssText = "position:fixed;bottom:12px;right:12px;z-index:2147483647;padding:4px 8px;font:12px sans-serif;border:0;border-radius:6px;color:#fff;cursor:pointer;opacity:.6;background:" + (enabled ? "#2e7d32" : "#9e9e9e");
-    badge2.addEventListener("click", onToggle);
-    return badge2;
+    badge.setAttribute("data-act", "menu");
+    badge.style.cssText = "padding:5px 10px;border:0;border-radius:6px;color:#fff;cursor:pointer;opacity:.85;box-shadow:0 1px 4px rgba(0,0,0,.4);background:" + (enabled ? "#2e7d32" : "#9e9e9e");
+    const menu = tag("div");
+    menu.style.cssText = "display:none;position:absolute;bottom:34px;right:0;background:#fff;color:#111;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,.3);overflow:hidden;min-width:200px;";
+    const item = (act, label, handler) => {
+      const b = tag("button", { textContent: label });
+      b.setAttribute("data-act", act);
+      b.style.cssText = "display:block;width:100%;text-align:left;padding:8px 12px;border:0;background:#fff;color:#111;cursor:pointer;font:12px sans-serif;";
+      b.addEventListener("mouseenter", () => {
+        b.style.background = "#f0f0f0";
+      });
+      b.addEventListener("mouseleave", () => {
+        b.style.background = "#fff";
+      });
+      b.addEventListener("click", handler);
+      menu.appendChild(b);
+      return b;
+    };
+    item("learn", "\u{1F3AF} Learn a popup", onLearn);
+    item("manage", "\u{1F4CB} Manage rules", onManage);
+    item("autozap", autozap ? "\u{1F916} Auto-zap: ON (this site)" : "\u{1F916} Auto-zap: OFF (this site)", onToggleAutozap);
+    item("log", "\u{1F4DC} Activity log", onShowLog);
+    item("site", enabled ? "\u{1F6AB} Disable on this site" : "\u2705 Enable on this site", onToggleSite);
+    badge.addEventListener("click", () => {
+      menu.style.display = menu.style.display === "none" ? "block" : "none";
+    });
+    wrap.appendChild(badge);
+    wrap.appendChild(menu);
+    return wrap;
+  }
+  function createActivityPanel({ entries, onClear, onClose }) {
+    const panel2 = tag("div", { className: PREFIX + "log" });
+    panel2.style.cssText = "position:fixed;bottom:54px;right:12px;z-index:2147483647;background:#111;color:#eee;padding:10px;border-radius:8px;font:11px/1.5 monospace;max-height:50vh;width:340px;overflow:auto;box-shadow:0 2px 12px rgba(0,0,0,.5);";
+    const head = tag("div");
+    head.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;";
+    head.appendChild(tag("strong", { textContent: "Activity", style: "color:#fff" }));
+    const btns = tag("div");
+    const clr = tag("button", { textContent: "Clear" });
+    clr.setAttribute("data-act", "clear");
+    clr.style.cssText = "margin-left:6px;cursor:pointer;font:11px monospace;";
+    clr.addEventListener("click", onClear);
+    const cls = tag("button", { textContent: "\u2715" });
+    cls.setAttribute("data-act", "close");
+    cls.style.cssText = "margin-left:6px;cursor:pointer;font:11px monospace;";
+    cls.addEventListener("click", onClose);
+    btns.appendChild(clr);
+    btns.appendChild(cls);
+    head.appendChild(btns);
+    panel2.appendChild(head);
+    if (!entries || entries.length === 0) {
+      panel2.appendChild(tag("div", {
+        textContent: "Nothing yet on this page. If a popup is here, use Learn a popup or turn on Auto-zap.",
+        style: "color:#aaa"
+      }));
+    } else {
+      for (const e of entries) {
+        const time = new Date(e.t).toLocaleTimeString();
+        panel2.appendChild(tag("div", { textContent: `${time}  [${e.action}] ${e.detail}` }));
+      }
+    }
+    return panel2;
   }
   function createLearnerToolbar({ onConfirm, onPick, onCancel }) {
     const mk = (act, label) => {
@@ -453,6 +605,10 @@
   var hostname = location.hostname.replace(/^www\./, "");
   var library = loadLibrary(getV);
   var persist = () => saveLibrary(setV, library);
+  var activityLog = createActivityLog();
+  function domainEntry() {
+    return library.domains[hostname] = library.domains[hostname] || { rules: [], restore: {} };
+  }
   var lastInteraction = 0;
   for (const ev of ["click", "keydown", "submit", "pointerdown"]) {
     window.addEventListener(ev, () => {
@@ -470,16 +626,19 @@
     try {
       Location.prototype.reload = function(...args) {
         if (guard.allowReload()) return origReload.apply(this, args);
+        activityLog.add("reload", "blocked an automatic page reload");
       };
     } catch {
     }
     const origAssign = Location.prototype.assign;
     Location.prototype.assign = function(url) {
       if (guard.allowReload()) return origAssign.call(this, url);
+      activityLog.add("reload", "blocked an automatic redirect");
     };
     const origReplace = Location.prototype.replace;
     Location.prototype.replace = function(url) {
       if (guard.allowReload()) return origReplace.call(this, url);
+      activityLog.add("reload", "blocked an automatic redirect");
     };
     const stripMeta = () => {
       document.querySelectorAll("meta[http-equiv='refresh' i]").forEach((m) => m.remove());
@@ -487,7 +646,7 @@
     document.addEventListener("DOMContentLoaded", stripMeta, { once: true });
   }
   function runOnce() {
-    runBlocker({ doc: document, library, hostname });
+    runBlocker({ doc: document, library, hostname, log: (a, d) => activityLog.add(a, d) });
   }
   function startObserver() {
     let pending = false;
@@ -523,12 +682,14 @@
       if (!el) return cleanup();
       const kws = extractKeywords(el);
       if (kws.length) {
-        const dom = library.domains[hostname] = library.domains[hostname] || { rules: [], restore: {} };
+        const dom = domainEntry();
         dom.rules.push(...kws);
-        const deg = detectDegradation(el);
-        dom.restore = { ...dom.restore, ...deg };
+        dom.restore = { ...dom.restore, ...detectDegradation(el) };
         persist();
+        activityLog.add("learn", `saved ${kws.length} rule(s) from ${el.tagName.toLowerCase()}`);
         runOnce();
+      } else {
+        activityLog.add("learn", "could not extract a stable keyword from that element");
       }
       cleanup();
     };
@@ -580,57 +741,82 @@
     });
     document.body.appendChild(panel);
   }
+  var logPanel = null;
+  var logUnsub = null;
+  function renderLogPanel() {
+    if (logPanel) logPanel.remove();
+    logPanel = createActivityPanel({
+      entries: activityLog.entries(),
+      onClear: () => activityLog.clear(),
+      onClose: () => {
+        closeLog();
+      }
+    });
+    document.body.appendChild(logPanel);
+  }
+  function closeLog() {
+    if (logUnsub) {
+      logUnsub();
+      logUnsub = null;
+    }
+    if (logPanel) {
+      logPanel.remove();
+      logPanel = null;
+    }
+  }
+  function toggleLog() {
+    if (logPanel) {
+      closeLog();
+      return;
+    }
+    renderLogPanel();
+    logUnsub = activityLog.subscribe(() => {
+      if (logPanel) renderLogPanel();
+    });
+  }
   function toggleSite() {
     const i = library.disabledDomains.indexOf(hostname);
     if (i >= 0) library.disabledDomains.splice(i, 1);
     else library.disabledDomains.push(hostname);
     persist();
-    refreshBadge();
+    refreshControl();
   }
-  function toggleCleanup() {
-    const dom = library.domains[hostname] = library.domains[hostname] || { rules: [], restore: {} };
-    dom.cleanup = !dom.cleanup;
+  function toggleAutozap() {
+    const dom = domainEntry();
+    dom.autozap = !dom.autozap;
     persist();
+    activityLog.add("autozap", dom.autozap ? "enabled on this site" : "disabled on this site");
+    refreshControl();
     runOnce();
   }
-  var badge = null;
-  function refreshBadge() {
-    if (badge) badge.remove();
-    badge = createBadge({
+  var control = null;
+  function refreshControl() {
+    if (control) control.remove();
+    const dom = (library.domains || {})[hostname];
+    control = createControlMenu({
       enabled: !library.disabledDomains.includes(hostname),
-      onToggle: toggleSite
+      autozap: !!(dom && dom.autozap),
+      onLearn: startLearner,
+      onManage: toggleManage,
+      onToggleAutozap: toggleAutozap,
+      onToggleSite: toggleSite,
+      onShowLog: toggleLog
     });
-    document.body.appendChild(badge);
+    document.body.appendChild(control);
   }
-  window.addEventListener("keydown", (e) => {
-    if (!e.altKey || !e.shiftKey) return;
-    const k = e.key.toLowerCase();
-    if (k === "p") {
-      e.preventDefault();
-      startLearner();
-    } else if (k === "m") {
-      e.preventDefault();
-      toggleManage();
-    } else if (k === "z") {
-      e.preventDefault();
-      toggleSite();
-    } else if (k === "c") {
-      e.preventDefault();
-      toggleCleanup();
-    }
-  }, true);
   try {
-    GM_registerMenuCommand("Learn a popup (Alt+Shift+P)", startLearner);
-    GM_registerMenuCommand("Manage rules (Alt+Shift+M)", toggleManage);
-    GM_registerMenuCommand("Toggle on this site (Alt+Shift+Z)", toggleSite);
-    GM_registerMenuCommand("Toggle tracker cleanup here (Alt+Shift+C)", toggleCleanup);
+    GM_registerMenuCommand("Learn a popup", startLearner);
+    GM_registerMenuCommand("Manage rules", toggleManage);
+    GM_registerMenuCommand("Toggle auto-zap (this site)", toggleAutozap);
+    GM_registerMenuCommand("Show activity log", toggleLog);
+    GM_registerMenuCommand("Toggle zapper (this site)", toggleSite);
   } catch {
   }
   installReloadDefense();
   function boot() {
     runOnce();
     startObserver();
-    refreshBadge();
+    refreshControl();
   }
   if (document.body) boot();
   else document.addEventListener("DOMContentLoaded", boot, { once: true });

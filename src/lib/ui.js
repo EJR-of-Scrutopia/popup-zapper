@@ -7,19 +7,94 @@ function tag(name, props = {}, children = []) {
   return el;
 }
 
-export function createBadge({ enabled, onToggle }) {
+// A bottom-right badge that opens a small action menu on click. Replaces global
+// hotkeys (which collide with Brave's built-in shortcuts).
+export function createControlMenu({
+  enabled, autozap, onLearn, onManage, onToggleAutozap, onToggleSite, onShowLog,
+}) {
+  const wrap = tag("div", { className: PREFIX + "control" });
+  wrap.style.cssText = "position:fixed;bottom:12px;right:12px;z-index:2147483647;font:12px sans-serif;";
+
   const badge = tag("button", {
-    className: PREFIX + "badge",
-    textContent: enabled ? "Zapper: ON" : "Zapper: OFF",
-    title: "Toggle Popup Zapper on this site",
+    textContent: enabled ? "⚡ Zapper" : "⚡ Zapper (off)",
+    title: "Popup Zapper menu",
   });
+  badge.setAttribute("data-act", "menu");
   badge.style.cssText =
-    "position:fixed;bottom:12px;right:12px;z-index:2147483647;" +
-    "padding:4px 8px;font:12px sans-serif;border:0;border-radius:6px;" +
-    "color:#fff;cursor:pointer;opacity:.6;background:" +
+    "padding:5px 10px;border:0;border-radius:6px;color:#fff;cursor:pointer;" +
+    "opacity:.85;box-shadow:0 1px 4px rgba(0,0,0,.4);background:" +
     (enabled ? "#2e7d32" : "#9e9e9e");
-  badge.addEventListener("click", onToggle);
-  return badge;
+
+  const menu = tag("div");
+  menu.style.cssText =
+    "display:none;position:absolute;bottom:34px;right:0;background:#fff;color:#111;" +
+    "border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,.3);overflow:hidden;min-width:200px;";
+
+  const item = (act, label, handler) => {
+    const b = tag("button", { textContent: label });
+    b.setAttribute("data-act", act);
+    b.style.cssText =
+      "display:block;width:100%;text-align:left;padding:8px 12px;border:0;" +
+      "background:#fff;color:#111;cursor:pointer;font:12px sans-serif;";
+    b.addEventListener("mouseenter", () => { b.style.background = "#f0f0f0"; });
+    b.addEventListener("mouseleave", () => { b.style.background = "#fff"; });
+    b.addEventListener("click", handler);
+    menu.appendChild(b);
+    return b;
+  };
+
+  item("learn", "🎯 Learn a popup", onLearn);
+  item("manage", "📋 Manage rules", onManage);
+  item("autozap", autozap ? "🤖 Auto-zap: ON (this site)" : "🤖 Auto-zap: OFF (this site)", onToggleAutozap);
+  item("log", "📜 Activity log", onShowLog);
+  item("site", enabled ? "🚫 Disable on this site" : "✅ Enable on this site", onToggleSite);
+
+  badge.addEventListener("click", () => {
+    menu.style.display = menu.style.display === "none" ? "block" : "none";
+  });
+
+  wrap.appendChild(badge);
+  wrap.appendChild(menu);
+  return wrap;
+}
+
+// Live activity panel showing what the zapper did / could not do.
+export function createActivityPanel({ entries, onClear, onClose }) {
+  const panel = tag("div", { className: PREFIX + "log" });
+  panel.style.cssText =
+    "position:fixed;bottom:54px;right:12px;z-index:2147483647;background:#111;" +
+    "color:#eee;padding:10px;border-radius:8px;font:11px/1.5 monospace;" +
+    "max-height:50vh;width:340px;overflow:auto;box-shadow:0 2px 12px rgba(0,0,0,.5);";
+
+  const head = tag("div");
+  head.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;";
+  head.appendChild(tag("strong", { textContent: "Activity", style: "color:#fff" }));
+  const btns = tag("div");
+  const clr = tag("button", { textContent: "Clear" });
+  clr.setAttribute("data-act", "clear");
+  clr.style.cssText = "margin-left:6px;cursor:pointer;font:11px monospace;";
+  clr.addEventListener("click", onClear);
+  const cls = tag("button", { textContent: "✕" });
+  cls.setAttribute("data-act", "close");
+  cls.style.cssText = "margin-left:6px;cursor:pointer;font:11px monospace;";
+  cls.addEventListener("click", onClose);
+  btns.appendChild(clr);
+  btns.appendChild(cls);
+  head.appendChild(btns);
+  panel.appendChild(head);
+
+  if (!entries || entries.length === 0) {
+    panel.appendChild(tag("div", {
+      textContent: "Nothing yet on this page. If a popup is here, use Learn a popup or turn on Auto-zap.",
+      style: "color:#aaa",
+    }));
+  } else {
+    for (const e of entries) {
+      const time = new Date(e.t).toLocaleTimeString();
+      panel.appendChild(tag("div", { textContent: `${time}  [${e.action}] ${e.detail}` }));
+    }
+  }
+  return panel;
 }
 
 export function createLearnerToolbar({ onConfirm, onPick, onCancel }) {

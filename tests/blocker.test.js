@@ -54,4 +54,27 @@ describe("runBlocker", () => {
     runBlocker({ doc: document, library: cleanupLib, hostname: "site.com" });
     expect(document.cookie).not.toMatch(/_ga=/);
   });
+
+  it("logs each action it takes", () => {
+    document.body.innerHTML = `<div class="promo-modal">x</div>`;
+    const events = [];
+    runBlocker({
+      doc: document, library: lib, hostname: "site.com",
+      log: (action, detail) => events.push({ action, detail }),
+    });
+    expect(events.some((e) => e.action === "popup")).toBe(true);
+  });
+
+  it("auto-zaps the top popup only when autozap is enabled for the domain", () => {
+    const html = `<div id="gate" style="position:fixed;z-index:9999">Please sign in to continue</div>`;
+    // disabled: gate stays
+    document.body.innerHTML = html;
+    runBlocker({ doc: document, library: lib, hostname: "site.com" });
+    expect(document.querySelector("#gate")).not.toBeNull();
+    // enabled: gate removed
+    document.body.innerHTML = html;
+    const azLib = { ...lib, domains: { "site.com": { rules: [], autozap: true } } };
+    runBlocker({ doc: document, library: azLib, hostname: "site.com" });
+    expect(document.querySelector("#gate")).toBeNull();
+  });
 });

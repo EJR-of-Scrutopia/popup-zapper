@@ -30,6 +30,28 @@ export function restoreElement(el) {
   el.style.removeProperty("max-height");
 }
 
+// Strip blur wherever it appears, including blur applied via a stylesheet class
+// (the ArchDaily case). Only touches the filter properties, so it is safe to run
+// page-wide — unlike opacity/pointer-events, legitimate full-element blur is rare.
+export function restoreBlur(doc, isWhitelisted) {
+  const win = doc.defaultView || window;
+  let count = 0;
+  for (const el of doc.body.querySelectorAll("*")) {
+    if (isWhitelisted && isWhitelisted(el)) continue;
+    let cs;
+    try { cs = win.getComputedStyle(el); } catch { continue; }
+    const f = cs.filter || "";
+    const b = cs.backdropFilter || cs.webkitBackdropFilter || "";
+    if (/blur\(/i.test(f) || /blur\(/i.test(b)) {
+      el.style.setProperty("filter", "none", "important");
+      el.style.setProperty("backdrop-filter", "none", "important");
+      el.style.setProperty("-webkit-backdrop-filter", "none", "important");
+      count++;
+    }
+  }
+  return count;
+}
+
 export function restorePage(doc) {
   const html = doc.documentElement;
   const body = doc.body;
