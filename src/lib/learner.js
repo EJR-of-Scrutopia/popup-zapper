@@ -29,6 +29,7 @@ export function findBestGuess(doc) {
   let best = null;
   let bestScore = MIN_SCORE - 1;
   for (const el of doc.body.querySelectorAll("*")) {
+    if (el.closest && el.closest("[data-pz]")) continue; // never target our own UI
     const s = scorePopupCandidate(el);
     if (s > bestScore) { bestScore = s; best = el; }
   }

@@ -162,6 +162,7 @@ function renderLogPanel() {
     onClose: () => { closeLog(); },
   });
   document.body.appendChild(logPanel);
+  logPanel.scrollTop = logPanel.scrollHeight; // keep newest in view
 }
 function closeLog() {
   if (logUnsub) { logUnsub(); logUnsub = null; }
@@ -179,7 +180,10 @@ function toggleSite() {
   if (i >= 0) library.disabledDomains.splice(i, 1);
   else library.disabledDomains.push(hostname);
   persist();
-  refreshControl();
+  const enabled = !library.disabledDomains.includes(hostname);
+  activityLog.add("site", enabled ? "enabled on this site" : "disabled on this site");
+  refreshControl(true);
+  if (enabled) runOnce();
 }
 
 function toggleAutozap() {
@@ -187,18 +191,20 @@ function toggleAutozap() {
   dom.autozap = !dom.autozap;
   persist();
   activityLog.add("autozap", dom.autozap ? "enabled on this site" : "disabled on this site");
-  refreshControl();
+  refreshControl(true);
   runOnce();
 }
 
 // ---- control menu ----
 let control = null;
-function refreshControl() {
+function refreshControl(open) {
   if (control) control.remove();
   const dom = (library.domains || {})[hostname];
   control = createControlMenu({
     enabled: !library.disabledDomains.includes(hostname),
     autozap: !!(dom && dom.autozap),
+    hostname,
+    open: !!open,
     onLearn: startLearner,
     onManage: toggleManage,
     onToggleAutozap: toggleAutozap,

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Popup Zapper
 // @namespace    https://github.com/param/popup-zapper
-// @version      1.1.0
+// @version      1.1.1
 // @description  Remove login/consent/newsletter/paywall popups, restore blurred content, defeat reload traps, auto-zap overlays, and learn new popups by click.
 // @author       Param
 // @match        *://*/*
@@ -213,6 +213,7 @@
     let best = null;
     let bestScore = MIN_SCORE - 1;
     for (const el of doc.body.querySelectorAll("*")) {
+      if (el.closest && el.closest("[data-pz]")) continue;
       const s = scorePopupCandidate(el);
       if (s > bestScore) {
         bestScore = s;
@@ -277,6 +278,12 @@
   function isWhitelisted(el, whitelist) {
     return (whitelist || []).some((rule) => matchesRule(el, rule));
   }
+  function isOwnUI(el) {
+    return !!(el.closest && el.closest("[data-pz]"));
+  }
+  function skip(el, whitelist) {
+    return isOwnUI(el) || isWhitelisted(el, whitelist);
+  }
   function describe(el) {
     const id = el.id ? `#${el.id}` : "";
     const cls = el.classList && el.classList.length ? "." + [...el.classList].slice(0, 2).join(".") : "";
@@ -304,7 +311,7 @@
   function popupPass(doc, rules, whitelist, log) {
     const matches = findMatches(doc.body, rules);
     for (const el of matches) {
-      if (isWhitelisted(el, whitelist)) continue;
+      if (skip(el, whitelist)) continue;
       const desc = describe(el);
       safe(() => el.remove());
       log("popup", `removed ${desc} (matched rule)`);
@@ -313,7 +320,7 @@
   function autozapPass(doc, whitelist, log) {
     const guess = findBestGuess(doc);
     if (!guess) return;
-    if (isWhitelisted(guess, whitelist)) return;
+    if (skip(guess, whitelist)) return;
     const desc = describe(guess);
     safe(() => guess.remove());
     log("autozap", `auto-removed ${desc}`);
@@ -321,13 +328,13 @@
   function restorePass(doc, whitelist, log) {
     restorePage(doc);
     for (const el of doc.body.querySelectorAll("*")) {
-      if (isWhitelisted(el, whitelist)) continue;
+      if (skip(el, whitelist)) continue;
       const style = el.getAttribute && el.getAttribute("style");
       if (style && /pointer-events\s*:\s*none|opacity\s*:\s*0/i.test(style)) {
         safe(() => restoreElement(el));
       }
     }
-    const n = safeVal(() => restoreBlur(doc, (el) => isWhitelisted(el, whitelist)), 0);
+    const n = safeVal(() => restoreBlur(doc, (el) => skip(el, whitelist)), 0);
     if (n) log("deblur", `removed blur from ${n} element(s)`);
   }
   function runBlocker({ doc, library: library2, hostname: hostname2, log = () => {
@@ -446,7 +453,14 @@
     };
     return {
       add(action, detail) {
-        entries.push({ t: Date.now(), action, detail: detail || "" });
+        detail = detail || "";
+        const last = entries[entries.length - 1];
+        if (last && last.action === action && last.detail === detail) {
+          last.t = Date.now();
+          last.count = (last.count || 1) + 1;
+          return;
+        }
+        entries.push({ t: Date.now(), action, detail });
         if (entries.length > max) entries.shift();
         notify();
       },
@@ -472,29 +486,46 @@
     for (const c of children) el.appendChild(c);
     return el;
   }
+  function own(el, kind) {
+    el.setAttribute("data-pz", kind);
+    return el;
+  }
   function createControlMenu({
     enabled,
     autozap,
+    hostname: hostname2,
+    open,
     onLearn,
     onManage,
     onToggleAutozap,
     onToggleSite,
     onShowLog
   }) {
-    const wrap = tag("div", { className: PREFIX + "control" });
+    const wrap = own(tag("div", { className: PREFIX + "control" }), "control");
     wrap.style.cssText = "position:fixed;bottom:12px;right:12px;z-index:2147483647;font:12px sans-serif;";
     const badge = tag("button", {
-      textContent: enabled ? "\u26A1 Zapper" : "\u26A1 Zapper (off)",
+      textContent: enabled ? "\u26A1 Zapper: ON" : "\u26A1 Zapper: OFF",
       title: "Popup Zapper menu"
     });
     badge.setAttribute("data-act", "menu");
-    badge.style.cssText = "padding:5px 10px;border:0;border-radius:6px;color:#fff;cursor:pointer;opacity:.85;box-shadow:0 1px 4px rgba(0,0,0,.4);background:" + (enabled ? "#2e7d32" : "#9e9e9e");
+    badge.style.cssText = "padding:5px 10px;border:0;border-radius:6px;color:#fff;cursor:pointer;opacity:.9;box-shadow:0 1px 4px rgba(0,0,0,.4);font-weight:bold;background:" + (enabled ? "#2e7d32" : "#b00020");
     const menu = tag("div");
-    menu.style.cssText = "display:none;position:absolute;bottom:34px;right:0;background:#fff;color:#111;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,.3);overflow:hidden;min-width:200px;";
-    const item = (act, label, handler) => {
+    menu.style.cssText = `display:${open ? "block" : "none"};position:absolute;bottom:34px;right:0;background:#fff;color:#111;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,.3);overflow:hidden;min-width:240px;`;
+    const header = tag("div");
+    header.style.cssText = "padding:8px 12px;background:#f6f6f6;border-bottom:1px solid #e0e0e0;";
+    header.appendChild(tag("div", {
+      textContent: hostname2 || "this site",
+      style: "font-weight:bold;color:#333;word-break:break-all;"
+    }));
+    header.appendChild(tag("div", {
+      textContent: enabled ? "\u25CF Running on this site" : "\u25CB Turned off on this site",
+      style: `color:${enabled ? "#2e7d32" : "#b00020"};margin-top:2px;`
+    }));
+    menu.appendChild(header);
+    const item = (act, label, handler, accent) => {
       const b = tag("button", { textContent: label });
       b.setAttribute("data-act", act);
-      b.style.cssText = "display:block;width:100%;text-align:left;padding:8px 12px;border:0;background:#fff;color:#111;cursor:pointer;font:12px sans-serif;";
+      b.style.cssText = `display:block;width:100%;text-align:left;padding:9px 12px;border:0;background:#fff;color:${accent || "#111"};cursor:pointer;font:12px sans-serif;`;
       b.addEventListener("mouseenter", () => {
         b.style.background = "#f0f0f0";
       });
@@ -505,11 +536,20 @@
       menu.appendChild(b);
       return b;
     };
+    item(
+      "site",
+      enabled ? "\u{1F534} Turn OFF for this site" : "\u{1F7E2} Turn ON for this site",
+      onToggleSite,
+      enabled ? "#b00020" : "#2e7d32"
+    );
+    item(
+      "autozap",
+      `\u{1F916} Auto-zap: ${autozap ? "ON" : "OFF"}  \u2014  tap to turn ${autozap ? "off" : "on"}`,
+      onToggleAutozap
+    );
     item("learn", "\u{1F3AF} Learn a popup", onLearn);
     item("manage", "\u{1F4CB} Manage rules", onManage);
-    item("autozap", autozap ? "\u{1F916} Auto-zap: ON (this site)" : "\u{1F916} Auto-zap: OFF (this site)", onToggleAutozap);
     item("log", "\u{1F4DC} Activity log", onShowLog);
-    item("site", enabled ? "\u{1F6AB} Disable on this site" : "\u2705 Enable on this site", onToggleSite);
     badge.addEventListener("click", () => {
       menu.style.display = menu.style.display === "none" ? "block" : "none";
     });
@@ -518,7 +558,7 @@
     return wrap;
   }
   function createActivityPanel({ entries, onClear, onClose }) {
-    const panel2 = tag("div", { className: PREFIX + "log" });
+    const panel2 = own(tag("div", { className: PREFIX + "log" }), "log");
     panel2.style.cssText = "position:fixed;bottom:54px;right:12px;z-index:2147483647;background:#111;color:#eee;padding:10px;border-radius:8px;font:11px/1.5 monospace;max-height:50vh;width:340px;overflow:auto;box-shadow:0 2px 12px rgba(0,0,0,.5);";
     const head = tag("div");
     head.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;";
@@ -544,7 +584,8 @@
     } else {
       for (const e of entries) {
         const time = new Date(e.t).toLocaleTimeString();
-        panel2.appendChild(tag("div", { textContent: `${time}  [${e.action}] ${e.detail}` }));
+        const times = e.count > 1 ? ` (x${e.count})` : "";
+        panel2.appendChild(tag("div", { textContent: `${time}  [${e.action}] ${e.detail}${times}` }));
       }
     }
     return panel2;
@@ -556,12 +597,12 @@
       b.style.cssText = "margin:0 4px;padding:4px 8px;font:12px sans-serif;cursor:pointer;";
       return b;
     };
-    const bar = tag("div", { className: PREFIX + "toolbar" }, [
+    const bar = own(tag("div", { className: PREFIX + "toolbar" }, [
       tag("span", { textContent: "Popup? " }),
       mk("confirm", "\u2713 Yes"),
       mk("pick", "Click the right one"),
       mk("cancel", "Cancel")
-    ]);
+    ]), "toolbar");
     bar.style.cssText = "position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2147483647;background:#222;color:#fff;padding:8px 12px;border-radius:8px;font:13px sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.4);";
     bar.querySelector("[data-act='confirm']").addEventListener("click", onConfirm);
     bar.querySelector("[data-act='pick']").addEventListener("click", onPick);
@@ -569,7 +610,7 @@
     return bar;
   }
   function createManagePanel({ library: library2, hostname: hostname2, onDelete, onPromote }) {
-    const panel2 = tag("div", { className: PREFIX + "panel" });
+    const panel2 = own(tag("div", { className: PREFIX + "panel" }), "panel");
     panel2.style.cssText = "position:fixed;top:40px;right:12px;z-index:2147483647;background:#fff;color:#111;padding:12px;border-radius:8px;font:13px sans-serif;max-height:70vh;overflow:auto;box-shadow:0 2px 12px rgba(0,0,0,.3);min-width:280px;";
     const rows = [];
     const addRow = (rule, scope) => {
@@ -753,6 +794,7 @@
       }
     });
     document.body.appendChild(logPanel);
+    logPanel.scrollTop = logPanel.scrollHeight;
   }
   function closeLog() {
     if (logUnsub) {
@@ -779,23 +821,28 @@
     if (i >= 0) library.disabledDomains.splice(i, 1);
     else library.disabledDomains.push(hostname);
     persist();
-    refreshControl();
+    const enabled = !library.disabledDomains.includes(hostname);
+    activityLog.add("site", enabled ? "enabled on this site" : "disabled on this site");
+    refreshControl(true);
+    if (enabled) runOnce();
   }
   function toggleAutozap() {
     const dom = domainEntry();
     dom.autozap = !dom.autozap;
     persist();
     activityLog.add("autozap", dom.autozap ? "enabled on this site" : "disabled on this site");
-    refreshControl();
+    refreshControl(true);
     runOnce();
   }
   var control = null;
-  function refreshControl() {
+  function refreshControl(open) {
     if (control) control.remove();
     const dom = (library.domains || {})[hostname];
     control = createControlMenu({
       enabled: !library.disabledDomains.includes(hostname),
       autozap: !!(dom && dom.autozap),
+      hostname,
+      open: !!open,
       onLearn: startLearner,
       onManage: toggleManage,
       onToggleAutozap: toggleAutozap,

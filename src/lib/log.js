@@ -8,7 +8,16 @@ export function createActivityLog(max = 200) {
   };
   return {
     add(action, detail) {
-      entries.push({ t: Date.now(), action, detail: detail || "" });
+      detail = detail || "";
+      const last = entries[entries.length - 1];
+      // Collapse identical consecutive events (e.g. a re-detected popup) so the
+      // log stays readable instead of flooding.
+      if (last && last.action === action && last.detail === detail) {
+        last.t = Date.now();
+        last.count = (last.count || 1) + 1;
+        return;
+      }
+      entries.push({ t: Date.now(), action, detail });
       if (entries.length > max) entries.shift();
       notify();
     },

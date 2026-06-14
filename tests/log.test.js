@@ -20,6 +20,16 @@ describe("createActivityLog", () => {
     expect(e[0].detail).toBe("2"); // oldest two dropped
   });
 
+  it("collapses identical consecutive entries with a count", () => {
+    const log = createActivityLog();
+    log.add("autozap", "auto-removed div.pz-log");
+    log.add("autozap", "auto-removed div.pz-log");
+    log.add("autozap", "auto-removed div.pz-log");
+    const e = log.entries();
+    expect(e).toHaveLength(1);
+    expect(e[0].count).toBe(3);
+  });
+
   it("notifies subscribers and clears", () => {
     const log = createActivityLog();
     const fn = vi.fn();

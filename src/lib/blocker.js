@@ -8,6 +8,15 @@ function isWhitelisted(el, whitelist) {
   return (whitelist || []).some((rule) => matchesRule(el, rule));
 }
 
+// The zapper's own injected UI is marked with [data-pz]; never act on it.
+function isOwnUI(el) {
+  return !!(el.closest && el.closest("[data-pz]"));
+}
+
+function skip(el, whitelist) {
+  return isOwnUI(el) || isWhitelisted(el, whitelist);
+}
+
 function describe(el) {
   const id = el.id ? `#${el.id}` : "";
   const cls = el.classList && el.classList.length
@@ -35,7 +44,7 @@ function consentPass(doc, log) {
 function popupPass(doc, rules, whitelist, log) {
   const matches = findMatches(doc.body, rules);
   for (const el of matches) {
-    if (isWhitelisted(el, whitelist)) continue;
+    if (skip(el, whitelist)) continue;
     const desc = describe(el);
     safe(() => el.remove());
     log("popup", `removed ${desc} (matched rule)`);
@@ -47,7 +56,7 @@ function popupPass(doc, rules, whitelist, log) {
 function autozapPass(doc, whitelist, log) {
   const guess = findBestGuess(doc);
   if (!guess) return;
-  if (isWhitelisted(guess, whitelist)) return;
+  if (skip(guess, whitelist)) return;
   const desc = describe(guess);
   safe(() => guess.remove());
   log("autozap", `auto-removed ${desc}`);
@@ -57,14 +66,14 @@ function restorePass(doc, whitelist, log) {
   restorePage(doc);
   // Conservative inline restore for opacity / pointer-events locks.
   for (const el of doc.body.querySelectorAll("*")) {
-    if (isWhitelisted(el, whitelist)) continue;
+    if (skip(el, whitelist)) continue;
     const style = el.getAttribute && el.getAttribute("style");
     if (style && /pointer-events\s*:\s*none|opacity\s*:\s*0/i.test(style)) {
       safe(() => restoreElement(el));
     }
   }
   // Page-wide blur removal (catches stylesheet-class blur).
-  const n = safeVal(() => restoreBlur(doc, (el) => isWhitelisted(el, whitelist)), 0);
+  const n = safeVal(() => restoreBlur(doc, (el) => skip(el, whitelist)), 0);
   if (n) log("deblur", `removed blur from ${n} element(s)`);
 }
 
