@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Popup Zapper
 // @namespace    https://github.com/param/popup-zapper
-// @version      1.6.1
+// @version      1.7.0
 // @description  Remove login/consent/newsletter/paywall popups, restore blurred content, defeat reload traps, auto-zap overlays, and learn new popups by click.
 // @author       Param
 // @match        *://*/*
@@ -837,16 +837,12 @@ Blurred elements: ${blurred.length}`);
   }
   function createControlMenu({
     enabled,
-    autozap,
-    resetMeter: resetMeter2,
-    freeze,
+    unlock,
     hostname: hostname2,
     open,
     onLearn,
     onManage,
-    onToggleAutozap,
-    onToggleResetMeter,
-    onToggleFreeze,
+    onToggleUnlock,
     onRestoreContent,
     onToggleSite,
     onShowLog,
@@ -894,16 +890,13 @@ Blurred elements: ${blurred.length}`);
       onToggleSite,
       enabled ? "#b00020" : "#2e7d32"
     );
-    item(
-      "autozap",
-      `\u{1F916} Auto-zap: ${autozap ? "ON" : "OFF"}  \u2014  tap to turn ${autozap ? "off" : "on"}`,
-      onToggleAutozap
-    );
-    if (onToggleResetMeter) {
-      item("meter", `\u{1F36A} Reset meter: ${resetMeter2 ? "ON" : "OFF"}  \u2014  tap to turn ${resetMeter2 ? "off" : "on"}`, onToggleResetMeter);
-    }
-    if (onToggleFreeze) {
-      item("keep", `\u{1F4BE} Keep content: ${freeze ? "ON" : "OFF"}  \u2014  tap to turn ${freeze ? "off" : "on"}`, onToggleFreeze);
+    if (onToggleUnlock) {
+      item(
+        "unlock",
+        unlock ? "\u{1F513} Unlock mode: ON  \u2014  tap to turn off" : "\u{1F513} Unlock mode: OFF  \u2014  remove gates, reset meter, keep content",
+        onToggleUnlock,
+        unlock ? "#2e7d32" : "#111"
+      );
     }
     if (onRestoreContent) item("restore", "\u21A9\uFE0F Restore saved content", onRestoreContent);
     if (onFreeze) item("freeze", "\u{1F9CA} Freeze auth (block paywall)", onFreeze);
@@ -1081,6 +1074,10 @@ Blurred elements: ${blurred.length}`);
     document.addEventListener("DOMContentLoaded", stripMeta, { once: true });
   }
   function runOnce() {
+    try {
+      document.querySelectorAll("meta[http-equiv='refresh' i]").forEach((m) => m.remove());
+    } catch {
+    }
     runBlocker({ doc: document, library, hostname, log: (a, d) => activityLog.add(a, d) });
     runFreeze();
   }
@@ -1278,29 +1275,18 @@ Blurred elements: ${blurred.length}`);
     refreshControl(true);
     if (enabled) runOnce();
   }
-  function toggleAutozap() {
+  function toggleUnlock() {
     const dom = domainEntry();
-    dom.autozap = !dom.autozap;
+    dom.unlock = !dom.unlock;
+    dom.autozap = dom.unlock;
+    dom.resetMeter = dom.unlock;
+    dom.freeze = dom.unlock;
+    freezeRestores = 0;
     persist();
-    activityLog.add("autozap", dom.autozap ? "enabled on this site" : "disabled on this site");
+    activityLog.add("unlock", dom.unlock ? "Unlock mode ON (gates/meter/keep-content)" : "Unlock mode OFF");
     refreshControl(true);
+    if (dom.unlock) maybeResetMeter();
     runOnce();
-  }
-  function toggleResetMeter() {
-    const dom = domainEntry();
-    dom.resetMeter = !dom.resetMeter;
-    persist();
-    activityLog.add("meter", dom.resetMeter ? "reset-meter enabled (takes effect on reload)" : "reset-meter disabled");
-    refreshControl(true);
-    if (dom.resetMeter) maybeResetMeter();
-  }
-  function toggleFreeze() {
-    const dom = domainEntry();
-    dom.freeze = !dom.freeze;
-    persist();
-    activityLog.add("keep", dom.freeze ? "keep-content enabled on this site" : "keep-content disabled");
-    refreshControl(true);
-    runFreeze();
   }
   function saveContentNow() {
     try {
@@ -1330,16 +1316,12 @@ Blurred elements: ${blurred.length}`);
     const dom = (library.domains || {})[hostname];
     control = createControlMenu({
       enabled: !library.disabledDomains.includes(hostname),
-      autozap: !!(dom && dom.autozap),
-      resetMeter: !!(dom && dom.resetMeter),
-      freeze: !!(dom && dom.freeze),
+      unlock: !!(dom && dom.unlock),
       hostname,
       open: !!open,
       onLearn: startLearner,
       onManage: toggleManage,
-      onToggleAutozap: toggleAutozap,
-      onToggleResetMeter: toggleResetMeter,
-      onToggleFreeze: toggleFreeze,
+      onToggleUnlock: toggleUnlock,
       onRestoreContent: restoreContentNow,
       onToggleSite: toggleSite,
       onShowLog: toggleLog,
@@ -1351,9 +1333,7 @@ Blurred elements: ${blurred.length}`);
   try {
     GM_registerMenuCommand("Learn a popup", startLearner);
     GM_registerMenuCommand("Manage rules", toggleManage);
-    GM_registerMenuCommand("Toggle auto-zap (this site)", toggleAutozap);
-    GM_registerMenuCommand("Toggle reset-meter (this site)", toggleResetMeter);
-    GM_registerMenuCommand("Toggle keep-content (this site)", toggleFreeze);
+    GM_registerMenuCommand("Toggle Unlock mode (this site)", toggleUnlock);
     GM_registerMenuCommand("Save content snapshot now", saveContentNow);
     GM_registerMenuCommand("Restore content snapshot", restoreContentNow);
     GM_registerMenuCommand("Show activity log", toggleLog);

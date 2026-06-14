@@ -24,10 +24,12 @@ to avoid clashing with Brave's built-in shortcuts.
 - **Learn a popup** — outlines its best guess; click the real popup to correct, and
   the keyword is saved for this site.
 - **Manage rules** — delete a rule, or promote a per-site rule to global.
-- **Auto-zap (this site)** — auto-remove the highest-scoring overlay on load AND
-  unlock gated content: strips "register to continue" overlays and the `max-height`
-  truncation that hides otherwise-free articles, and keeps re-applying as the site
-  retries. No learning needed. Off by default; heuristic, so check the activity log.
+- **Unlock mode (this site)** — one bundled switch for stubborn forced-signup gates.
+  Turns on, together: auto-zap (remove "register to continue" overlays), reset-meter
+  (wipe the gate's counter at document-start), and keep-content (snapshot the full
+  article and restore it if the page reloads into a gated version). Off by default,
+  per site. Heuristic and best-effort — check the activity log.
+- **Restore saved content** — manually put back the last full version Unlock mode saved.
 - **Activity log** — live view of what was removed, de-blurred, rejected, or blocked
   (and a hint when nothing matched).
 - **Freeze auth (block paywall)** — scans the page for known metering/paywall vendors

@@ -67,6 +67,8 @@ function installReloadDefense() {
 
 // ---- blocker engine ----
 function runOnce() {
+  // Keep stripping meta-refresh in case it is injected after load.
+  try { document.querySelectorAll("meta[http-equiv='refresh' i]").forEach((m) => m.remove()); } catch { /* ignore */ }
   runBlocker({ doc: document, library, hostname, log: (a, d) => activityLog.add(a, d) });
   runFreeze();
 }
@@ -245,31 +247,19 @@ function toggleSite() {
   if (enabled) runOnce();
 }
 
-function toggleAutozap() {
+// One bundled switch: auto-zap + reset-meter + keep-content together.
+function toggleUnlock() {
   const dom = domainEntry();
-  dom.autozap = !dom.autozap;
+  dom.unlock = !dom.unlock;
+  dom.autozap = dom.unlock;
+  dom.resetMeter = dom.unlock;
+  dom.freeze = dom.unlock;
+  freezeRestores = 0;
   persist();
-  activityLog.add("autozap", dom.autozap ? "enabled on this site" : "disabled on this site");
+  activityLog.add("unlock", dom.unlock ? "Unlock mode ON (gates/meter/keep-content)" : "Unlock mode OFF");
   refreshControl(true);
+  if (dom.unlock) maybeResetMeter();
   runOnce();
-}
-
-function toggleResetMeter() {
-  const dom = domainEntry();
-  dom.resetMeter = !dom.resetMeter;
-  persist();
-  activityLog.add("meter", dom.resetMeter ? "reset-meter enabled (takes effect on reload)" : "reset-meter disabled");
-  refreshControl(true);
-  if (dom.resetMeter) maybeResetMeter();
-}
-
-function toggleFreeze() {
-  const dom = domainEntry();
-  dom.freeze = !dom.freeze;
-  persist();
-  activityLog.add("keep", dom.freeze ? "keep-content enabled on this site" : "keep-content disabled");
-  refreshControl(true);
-  runFreeze();
 }
 
 function saveContentNow() {
@@ -306,16 +296,12 @@ function refreshControl(open) {
   const dom = (library.domains || {})[hostname];
   control = createControlMenu({
     enabled: !library.disabledDomains.includes(hostname),
-    autozap: !!(dom && dom.autozap),
-    resetMeter: !!(dom && dom.resetMeter),
-    freeze: !!(dom && dom.freeze),
+    unlock: !!(dom && dom.unlock),
     hostname,
     open: !!open,
     onLearn: startLearner,
     onManage: toggleManage,
-    onToggleAutozap: toggleAutozap,
-    onToggleResetMeter: toggleResetMeter,
-    onToggleFreeze: toggleFreeze,
+    onToggleUnlock: toggleUnlock,
     onRestoreContent: restoreContentNow,
     onToggleSite: toggleSite,
     onShowLog: toggleLog,
@@ -329,9 +315,7 @@ function refreshControl(open) {
 try {
   GM_registerMenuCommand("Learn a popup", startLearner);
   GM_registerMenuCommand("Manage rules", toggleManage);
-  GM_registerMenuCommand("Toggle auto-zap (this site)", toggleAutozap);
-  GM_registerMenuCommand("Toggle reset-meter (this site)", toggleResetMeter);
-  GM_registerMenuCommand("Toggle keep-content (this site)", toggleFreeze);
+  GM_registerMenuCommand("Toggle Unlock mode (this site)", toggleUnlock);
   GM_registerMenuCommand("Save content snapshot now", saveContentNow);
   GM_registerMenuCommand("Restore content snapshot", restoreContentNow);
   GM_registerMenuCommand("Show activity log", toggleLog);

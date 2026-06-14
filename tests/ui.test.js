@@ -8,27 +8,32 @@ beforeEach(() => { document.body.innerHTML = ""; });
 describe("createControlMenu", () => {
   it("renders actions and fires their handlers", () => {
     const h = {
-      onLearn: vi.fn(), onManage: vi.fn(), onToggleAutozap: vi.fn(),
+      onLearn: vi.fn(), onManage: vi.fn(), onToggleUnlock: vi.fn(),
       onToggleSite: vi.fn(), onShowLog: vi.fn(),
     };
-    const ctrl = createControlMenu({ enabled: true, autozap: false, ...h });
+    const ctrl = createControlMenu({ enabled: true, unlock: false, ...h });
     document.body.appendChild(ctrl);
     ctrl.querySelector("[data-act='menu']").click(); // open
     ctrl.querySelector("[data-act='learn']").click();
     ctrl.querySelector("[data-act='manage']").click();
-    ctrl.querySelector("[data-act='autozap']").click();
+    ctrl.querySelector("[data-act='unlock']").click();
     ctrl.querySelector("[data-act='log']").click();
     ctrl.querySelector("[data-act='site']").click();
     expect(h.onLearn).toHaveBeenCalledOnce();
     expect(h.onManage).toHaveBeenCalledOnce();
-    expect(h.onToggleAutozap).toHaveBeenCalledOnce();
+    expect(h.onToggleUnlock).toHaveBeenCalledOnce();
     expect(h.onShowLog).toHaveBeenCalledOnce();
     expect(h.onToggleSite).toHaveBeenCalledOnce();
   });
 
   it("reflects disabled state in the badge label", () => {
-    const ctrl = createControlMenu({ enabled: false, autozap: false });
+    const ctrl = createControlMenu({ enabled: false, unlock: false });
     expect(ctrl.querySelector("[data-act='menu']").textContent).toMatch(/off/i);
+  });
+
+  it("shows Unlock mode ON when enabled", () => {
+    const ctrl = createControlMenu({ enabled: true, unlock: true, onToggleUnlock() {} });
+    expect(ctrl.querySelector("[data-act='unlock']").textContent).toMatch(/on/i);
   });
 });
 
