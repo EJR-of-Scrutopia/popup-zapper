@@ -9,6 +9,7 @@ import { collectDiagnostics } from "./lib/diagnostics.js";
 import { findPaywallHosts, buildUblockFilters } from "./lib/paywall-filters.js";
 import { resetMeter } from "./lib/meter.js";
 import { captureSnapshot, restoreSnapshot } from "./lib/freeze.js";
+import { extractCleanContent, applyCleanContent } from "./lib/cleanfetch.js";
 import {
   createControlMenu, createActivityPanel, createLearnerToolbar, createManagePanel,
   createFilterPanel,
@@ -262,6 +263,43 @@ function toggleUnlock() {
   runOnce();
 }
 
+// Last-ditch: re-download the page with NO cookies (sends none of your
+// credentials). If the gate is cookie/counter-based, the server returns the full
+// article, which we render statically in place.
+function fetchCleanCopy() {
+  if (typeof GM_xmlhttpRequest !== "function") {
+    alert("Popup Zapper: GM_xmlhttpRequest isn't available in this manager.");
+    return;
+  }
+  activityLog.add("clean", "fetching an anonymous (cookie-free) copy…");
+  GM_xmlhttpRequest({
+    method: "GET",
+    url: location.href,
+    anonymous: true,
+    headers: { "Cache-Control": "no-cache" },
+    onload: (res) => {
+      try {
+        const extracted = extractCleanContent(res.responseText);
+        if (extracted && applyCleanContent(document, extracted)) {
+          if (extracted.title) document.title = extracted.title;
+          try { captureSnapshot(document, window.sessionStorage, true); } catch { /* ignore */ }
+          activityLog.add("clean", `applied clean copy (${extracted.len} chars)`);
+          alert("Popup Zapper: fetched a clean copy. It's static — links/galleries may not work, but the text/images should be readable.");
+        } else {
+          activityLog.add("clean", "no fuller content in the clean copy (gate may not be cookie-based)");
+          alert("Popup Zapper: the cookie-free copy was also gated, so this site decides server-side (per account/IP). Can't bypass that.");
+        }
+      } catch {
+        activityLog.add("clean", "error applying clean copy");
+      }
+    },
+    onerror: () => {
+      activityLog.add("clean", "anonymous fetch failed");
+      alert("Popup Zapper: the anonymous fetch failed (blocked by the site or network).");
+    },
+  });
+}
+
 function saveContentNow() {
   try {
     const ok = captureSnapshot(document, window.sessionStorage, true);
@@ -303,6 +341,7 @@ function refreshControl(open) {
     onManage: toggleManage,
     onToggleUnlock: toggleUnlock,
     onRestoreContent: restoreContentNow,
+    onCleanCopy: fetchCleanCopy,
     onToggleSite: toggleSite,
     onShowLog: toggleLog,
     onDiagnostics: copyDiagnostics,
@@ -316,6 +355,7 @@ try {
   GM_registerMenuCommand("Learn a popup", startLearner);
   GM_registerMenuCommand("Manage rules", toggleManage);
   GM_registerMenuCommand("Toggle Unlock mode (this site)", toggleUnlock);
+  GM_registerMenuCommand("Fetch clean copy (cookie-free)", fetchCleanCopy);
   GM_registerMenuCommand("Save content snapshot now", saveContentNow);
   GM_registerMenuCommand("Restore content snapshot", restoreContentNow);
   GM_registerMenuCommand("Show activity log", toggleLog);

@@ -17,7 +17,7 @@ function own(el, kind) {
 // hotkeys (which collide with Brave's built-in shortcuts).
 export function createControlMenu({
   enabled, unlock, hostname, open,
-  onLearn, onManage, onToggleUnlock, onRestoreContent,
+  onLearn, onManage, onToggleUnlock, onRestoreContent, onCleanCopy,
   onToggleSite, onShowLog, onDiagnostics, onFreeze,
 }) {
   const wrap = own(tag("div", { className: PREFIX + "control" }), "control");
@@ -83,6 +83,7 @@ export function createControlMenu({
     );
   }
   if (onRestoreContent) item("restore", "↩️ Restore saved content", onRestoreContent);
+  if (onCleanCopy) item("clean", "🌐 Fetch clean copy (cookie-free)", onCleanCopy);
   if (onFreeze) item("freeze", "🧊 Freeze auth (block paywall)", onFreeze);
   item("learn", "🎯 Learn a popup", onLearn);
   item("manage", "📋 Manage rules", onManage);

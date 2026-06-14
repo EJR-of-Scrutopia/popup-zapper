@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Popup Zapper
 // @namespace    https://github.com/param/popup-zapper
-// @version      1.7.0
+// @version      1.8.0
 // @description  Remove login/consent/newsletter/paywall popups, restore blurred content, defeat reload traps, auto-zap overlays, and learn new popups by click.
 // @author       Param
 // @match        *://*/*
@@ -10,6 +10,8 @@
 // @grant        GM_getValue
 // @grant        GM_registerMenuCommand
 // @grant        GM_setClipboard
+// @grant        GM_xmlhttpRequest
+// @connect      *
 // @noframes
 // ==/UserScript==
 
@@ -823,6 +825,40 @@ Blurred elements: ${blurred.length}`);
     return true;
   }
 
+  // src/lib/cleanfetch.js
+  function extractCleanContent(htmlString) {
+    if (!htmlString) return null;
+    let doc;
+    try {
+      doc = new DOMParser().parseFromString(htmlString, "text/html");
+    } catch {
+      return null;
+    }
+    if (!doc || !doc.body) return null;
+    const picked = pickContent(doc);
+    if (!picked) return null;
+    const titleEl = doc.querySelector("title");
+    return {
+      title: titleEl && titleEl.textContent || "",
+      sel: picked.sel,
+      html: picked.el.innerHTML,
+      len: (picked.el.textContent || "").trim().length
+    };
+  }
+  function applyCleanContent(doc, extracted) {
+    if (!extracted || !extracted.html) return false;
+    let el;
+    try {
+      el = doc.querySelector(extracted.sel);
+    } catch {
+      el = null;
+    }
+    if (!el) el = doc.body;
+    if (!el) return false;
+    el.innerHTML = extracted.html;
+    return true;
+  }
+
   // src/lib/ui.js
   var PREFIX2 = "pz-";
   function tag(name, props = {}, children = []) {
@@ -844,6 +880,7 @@ Blurred elements: ${blurred.length}`);
     onManage,
     onToggleUnlock,
     onRestoreContent,
+    onCleanCopy,
     onToggleSite,
     onShowLog,
     onDiagnostics,
@@ -899,6 +936,7 @@ Blurred elements: ${blurred.length}`);
       );
     }
     if (onRestoreContent) item("restore", "\u21A9\uFE0F Restore saved content", onRestoreContent);
+    if (onCleanCopy) item("clean", "\u{1F310} Fetch clean copy (cookie-free)", onCleanCopy);
     if (onFreeze) item("freeze", "\u{1F9CA} Freeze auth (block paywall)", onFreeze);
     item("learn", "\u{1F3AF} Learn a popup", onLearn);
     item("manage", "\u{1F4CB} Manage rules", onManage);
@@ -1288,6 +1326,42 @@ Blurred elements: ${blurred.length}`);
     if (dom.unlock) maybeResetMeter();
     runOnce();
   }
+  function fetchCleanCopy() {
+    if (typeof GM_xmlhttpRequest !== "function") {
+      alert("Popup Zapper: GM_xmlhttpRequest isn't available in this manager.");
+      return;
+    }
+    activityLog.add("clean", "fetching an anonymous (cookie-free) copy\u2026");
+    GM_xmlhttpRequest({
+      method: "GET",
+      url: location.href,
+      anonymous: true,
+      headers: { "Cache-Control": "no-cache" },
+      onload: (res) => {
+        try {
+          const extracted = extractCleanContent(res.responseText);
+          if (extracted && applyCleanContent(document, extracted)) {
+            if (extracted.title) document.title = extracted.title;
+            try {
+              captureSnapshot(document, window.sessionStorage, true);
+            } catch {
+            }
+            activityLog.add("clean", `applied clean copy (${extracted.len} chars)`);
+            alert("Popup Zapper: fetched a clean copy. It's static \u2014 links/galleries may not work, but the text/images should be readable.");
+          } else {
+            activityLog.add("clean", "no fuller content in the clean copy (gate may not be cookie-based)");
+            alert("Popup Zapper: the cookie-free copy was also gated, so this site decides server-side (per account/IP). Can't bypass that.");
+          }
+        } catch {
+          activityLog.add("clean", "error applying clean copy");
+        }
+      },
+      onerror: () => {
+        activityLog.add("clean", "anonymous fetch failed");
+        alert("Popup Zapper: the anonymous fetch failed (blocked by the site or network).");
+      }
+    });
+  }
   function saveContentNow() {
     try {
       const ok = captureSnapshot(document, window.sessionStorage, true);
@@ -1323,6 +1397,7 @@ Blurred elements: ${blurred.length}`);
       onManage: toggleManage,
       onToggleUnlock: toggleUnlock,
       onRestoreContent: restoreContentNow,
+      onCleanCopy: fetchCleanCopy,
       onToggleSite: toggleSite,
       onShowLog: toggleLog,
       onDiagnostics: copyDiagnostics,
@@ -1334,6 +1409,7 @@ Blurred elements: ${blurred.length}`);
     GM_registerMenuCommand("Learn a popup", startLearner);
     GM_registerMenuCommand("Manage rules", toggleManage);
     GM_registerMenuCommand("Toggle Unlock mode (this site)", toggleUnlock);
+    GM_registerMenuCommand("Fetch clean copy (cookie-free)", fetchCleanCopy);
     GM_registerMenuCommand("Save content snapshot now", saveContentNow);
     GM_registerMenuCommand("Restore content snapshot", restoreContentNow);
     GM_registerMenuCommand("Show activity log", toggleLog);
