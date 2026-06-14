@@ -72,13 +72,21 @@ function runOnce() {
 }
 
 // Keep-content: save the fullest version, restore it if the page got gated.
+// Capped so that if the site keeps re-gating we don't war with it (flashing).
+let freezeRestores = 0;
+const MAX_FREEZE_RESTORES = 3;
 function runFreeze() {
   const dom = (library.domains || {})[hostname];
   if (!dom || !dom.freeze) return;
   try {
     captureSnapshot(document, window.sessionStorage);
-    if (restoreSnapshot(document, window.sessionStorage)) {
-      activityLog.add("keep", "restored saved full content");
+    if (freezeRestores < MAX_FREEZE_RESTORES && restoreSnapshot(document, window.sessionStorage)) {
+      freezeRestores++;
+      if (freezeRestores >= MAX_FREEZE_RESTORES) {
+        activityLog.add("keep", "stopped restoring — the page keeps re-gating (likely a navigation gate we can't beat)");
+      } else {
+        activityLog.add("keep", `restored saved full content (${freezeRestores}/${MAX_FREEZE_RESTORES})`);
+      }
     }
   } catch { /* ignore */ }
 }

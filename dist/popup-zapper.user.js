@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Popup Zapper
 // @namespace    https://github.com/param/popup-zapper
-// @version      1.6.0
+// @version      1.6.1
 // @description  Remove login/consent/newsletter/paywall popups, restore blurred content, defeat reload traps, auto-zap overlays, and learn new popups by click.
 // @author       Param
 // @match        *://*/*
@@ -1084,13 +1084,20 @@ Blurred elements: ${blurred.length}`);
     runBlocker({ doc: document, library, hostname, log: (a, d) => activityLog.add(a, d) });
     runFreeze();
   }
+  var freezeRestores = 0;
+  var MAX_FREEZE_RESTORES = 3;
   function runFreeze() {
     const dom = (library.domains || {})[hostname];
     if (!dom || !dom.freeze) return;
     try {
       captureSnapshot(document, window.sessionStorage);
-      if (restoreSnapshot(document, window.sessionStorage)) {
-        activityLog.add("keep", "restored saved full content");
+      if (freezeRestores < MAX_FREEZE_RESTORES && restoreSnapshot(document, window.sessionStorage)) {
+        freezeRestores++;
+        if (freezeRestores >= MAX_FREEZE_RESTORES) {
+          activityLog.add("keep", "stopped restoring \u2014 the page keeps re-gating (likely a navigation gate we can't beat)");
+        } else {
+          activityLog.add("keep", `restored saved full content (${freezeRestores}/${MAX_FREEZE_RESTORES})`);
+        }
       }
     } catch {
     }
