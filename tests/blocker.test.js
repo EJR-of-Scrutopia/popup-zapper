@@ -44,4 +44,14 @@ describe("runBlocker", () => {
     });
     expect(document.querySelector(".promo-modal")).not.toBeNull();
   });
+
+  it("clears tracking cookies only when cleanup is enabled for the domain", () => {
+    document.cookie = "_ga=abc;path=/";
+    const cleanupLib = {
+      ...lib,
+      domains: { "site.com": { rules: [], cleanup: true } },
+    };
+    runBlocker({ doc: document, library: cleanupLib, hostname: "site.com" });
+    expect(document.cookie).not.toMatch(/_ga=/);
+  });
 });

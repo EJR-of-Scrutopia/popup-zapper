@@ -146,6 +146,13 @@ function toggleSite() {
   refreshBadge();
 }
 
+function toggleCleanup() {
+  const dom = (library.domains[hostname] = library.domains[hostname] || { rules: [], restore: {} });
+  dom.cleanup = !dom.cleanup;
+  persist();
+  runOnce();
+}
+
 let badge = null;
 function refreshBadge() {
   if (badge) badge.remove();
@@ -163,6 +170,7 @@ window.addEventListener("keydown", (e) => {
   if (k === "p") { e.preventDefault(); startLearner(); }
   else if (k === "m") { e.preventDefault(); toggleManage(); }
   else if (k === "z") { e.preventDefault(); toggleSite(); }
+  else if (k === "c") { e.preventDefault(); toggleCleanup(); }
 }, true);
 
 // ---- GM menu commands (fallback for hotkeys) ----
@@ -170,6 +178,7 @@ try {
   GM_registerMenuCommand("Learn a popup (Alt+Shift+P)", startLearner);
   GM_registerMenuCommand("Manage rules (Alt+Shift+M)", toggleManage);
   GM_registerMenuCommand("Toggle on this site (Alt+Shift+Z)", toggleSite);
+  GM_registerMenuCommand("Toggle tracker cleanup here (Alt+Shift+C)", toggleCleanup);
 } catch { /* not available in all managers */ }
 
 // ---- boot ----

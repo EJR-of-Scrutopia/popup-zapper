@@ -1,6 +1,7 @@
 import { getActiveRules, findMatches, matchesRule } from "./rules.js";
 import { restoreElement, restorePage } from "./restore.js";
 import { findRejectButton, CMP_SELECTORS } from "./consent.js";
+import { runCleanup } from "./cleanup.js";
 
 function isWhitelisted(el, whitelist) {
   return (whitelist || []).some((rule) => matchesRule(el, rule));
@@ -41,6 +42,10 @@ export function runBlocker({ doc, library, hostname }) {
   if ((library.disabledDomains || []).includes(hostname)) return;
   const rules = getActiveRules(library, hostname);
   safe(() => consentPass(doc));
+  const domain = (library.domains || {})[hostname];
+  if (domain && domain.cleanup) {
+    safe(() => runCleanup(doc, doc.defaultView));
+  }
   safe(() => popupPass(doc, rules, library.whitelist));
   safe(() => restorePass(doc, rules, library.whitelist));
 }
