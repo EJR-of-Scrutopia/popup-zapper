@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Popup Zapper
 // @namespace    https://github.com/param/popup-zapper
-// @version      1.4.0
+// @version      1.4.1
 // @description  Remove login/consent/newsletter/paywall popups, restore blurred content, defeat reload traps, auto-zap overlays, and learn new popups by click.
 // @author       Param
 // @match        *://*/*
@@ -193,6 +193,7 @@
   var WALL_TEXT = /sign ?in|log ?in|subscribe|sign ?up|register|cookie|consent|create (an )?account|continue reading/i;
   var MIN_SCORE = 3;
   var EXT_ROOTS = /protonpass|1password|onepassword|bitwarden|lastpass|dashlane|grammarly|honey-|metamask|__crx/i;
+  var CHROME_SEL = "header,nav,footer,[role=banner],[role=navigation],[role=contentinfo]";
   function scorePopupCandidate(el) {
     if (!el || el.nodeType !== 1) return 0;
     const view = el.ownerDocument.defaultView || window;
@@ -217,6 +218,7 @@
     for (const el of doc.body.querySelectorAll("*")) {
       if (el.closest && el.closest("[data-pz]")) continue;
       if (el.id && EXT_ROOTS.test(el.id)) continue;
+      if (el.closest && el.closest(CHROME_SEL)) continue;
       const s = scorePopupCandidate(el);
       if (s > bestScore) {
         bestScore = s;

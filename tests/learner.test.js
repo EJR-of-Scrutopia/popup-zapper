@@ -35,4 +35,10 @@ describe("findBestGuess", () => {
       `<div id="protonpass-root-8218" style="position:fixed;z-index:99999">Sign in</div>`;
     expect(findBestGuess(document)).toBeNull();
   });
+
+  it("ignores site chrome (header/nav)", () => {
+    document.body.innerHTML =
+      `<header style="position:fixed;z-index:450">Menu Sign in Subscribe</header>`;
+    expect(findBestGuess(document)).toBeNull();
+  });
 });
