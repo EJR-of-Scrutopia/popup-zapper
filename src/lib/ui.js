@@ -17,7 +17,7 @@ function own(el, kind) {
 // hotkeys (which collide with Brave's built-in shortcuts).
 export function createControlMenu({
   enabled, autozap, hostname, open,
-  onLearn, onManage, onToggleAutozap, onToggleSite, onShowLog,
+  onLearn, onManage, onToggleAutozap, onToggleSite, onShowLog, onDiagnostics,
 }) {
   const wrap = own(tag("div", { className: PREFIX + "control" }), "control");
   wrap.style.cssText = "position:fixed;bottom:12px;right:12px;z-index:2147483647;font:12px sans-serif;";
@@ -78,6 +78,7 @@ export function createControlMenu({
   item("learn", "🎯 Learn a popup", onLearn);
   item("manage", "📋 Manage rules", onManage);
   item("log", "📜 Activity log", onShowLog);
+  if (onDiagnostics) item("diag", "🔧 Copy diagnostics (debug)", onDiagnostics);
 
   badge.addEventListener("click", () => {
     menu.style.display = menu.style.display === "none" ? "block" : "none";

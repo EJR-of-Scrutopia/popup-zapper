@@ -5,6 +5,7 @@ import { findBestGuess } from "./lib/learner.js";
 import { extractKeywords } from "./lib/extract.js";
 import { detectDegradation } from "./lib/restore.js";
 import { createActivityLog } from "./lib/log.js";
+import { collectDiagnostics } from "./lib/diagnostics.js";
 import {
   createControlMenu, createActivityPanel, createLearnerToolbar, createManagePanel,
 } from "./lib/ui.js";
@@ -174,6 +175,19 @@ function toggleLog() {
   logUnsub = activityLog.subscribe(() => { if (logPanel) renderLogPanel(); });
 }
 
+// ---- diagnostics ----
+function copyDiagnostics() {
+  const report = collectDiagnostics(document);
+  try {
+    GM_setClipboard(report);
+    alert("Popup Zapper: diagnostics copied to clipboard. Paste them to share.");
+  } catch {
+    // eslint-disable-next-line no-console
+    console.log("[Popup Zapper diagnostics]\n" + report);
+    alert("Popup Zapper: diagnostics logged to the console (press F12 to view).");
+  }
+}
+
 // ---- toggles ----
 function toggleSite() {
   const i = library.disabledDomains.indexOf(hostname);
@@ -210,6 +224,7 @@ function refreshControl(open) {
     onToggleAutozap: toggleAutozap,
     onToggleSite: toggleSite,
     onShowLog: toggleLog,
+    onDiagnostics: copyDiagnostics,
   });
   document.body.appendChild(control);
 }
@@ -220,6 +235,7 @@ try {
   GM_registerMenuCommand("Manage rules", toggleManage);
   GM_registerMenuCommand("Toggle auto-zap (this site)", toggleAutozap);
   GM_registerMenuCommand("Show activity log", toggleLog);
+  GM_registerMenuCommand("Copy page diagnostics (debug)", copyDiagnostics);
   GM_registerMenuCommand("Toggle zapper (this site)", toggleSite);
 } catch { /* not available in all managers */ }
 

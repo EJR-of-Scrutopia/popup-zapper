@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Popup Zapper
 // @namespace    https://github.com/param/popup-zapper
-// @version      1.1.1
+// @version      1.1.2
 // @description  Remove login/consent/newsletter/paywall popups, restore blurred content, defeat reload traps, auto-zap overlays, and learn new popups by click.
 // @author       Param
 // @match        *://*/*
@@ -9,6 +9,7 @@
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_registerMenuCommand
+// @grant        GM_setClipboard
 // @noframes
 // ==/UserScript==
 
@@ -478,6 +479,58 @@
     };
   }
 
+  // src/lib/diagnostics.js
+  function describe2(el) {
+    const id = el.id ? `#${el.id}` : "";
+    const cls = el.classList && el.classList.length ? "." + [...el.classList].slice(0, 3).join(".") : "";
+    return `${el.tagName.toLowerCase()}${id}${cls}`;
+  }
+  function collectDiagnostics(doc) {
+    const win = doc.defaultView || window;
+    const out = [];
+    out.push(`Popup Zapper diagnostics`);
+    out.push(`URL: ${doc.location && doc.location.href || ""}`);
+    const iframes = [...doc.querySelectorAll("iframe")];
+    out.push(`iframes: ${iframes.length}`);
+    iframes.slice(0, 12).forEach((f) => out.push(`  iframe src=${f.getAttribute("src") || "(none)"}`));
+    const scored = [];
+    const blurred = [];
+    for (const el of doc.body.querySelectorAll("*")) {
+      if (el.closest && el.closest("[data-pz]")) continue;
+      let cs;
+      try {
+        cs = win.getComputedStyle(el);
+      } catch {
+        continue;
+      }
+      const score = scorePopupCandidate(el);
+      if (score > 0) {
+        let w = 0, h = 0;
+        try {
+          const r = el.getBoundingClientRect();
+          w = Math.round(r.width);
+          h = Math.round(r.height);
+        } catch {
+        }
+        const text = (el.textContent || "").trim().replace(/\s+/g, " ").slice(0, 50);
+        scored.push({ score, label: describe2(el), pos: cs.position, z: cs.zIndex, w, h, text });
+      }
+      const f = cs.filter || "";
+      const b = cs.backdropFilter || cs.webkitBackdropFilter || "";
+      if (/blur\(/i.test(f) || /blur\(/i.test(b)) {
+        blurred.push(`${describe2(el)}  filter=${f || "-"}  backdrop=${b || "-"}`);
+      }
+    }
+    scored.sort((a, b) => b.score - a.score);
+    out.push(`
+Top popup candidates (score > 0): ${scored.length}`);
+    scored.slice(0, 15).forEach((s) => out.push(`  [${s.score}] ${s.label} pos=${s.pos} z=${s.z} ${s.w}x${s.h} "${s.text}"`));
+    out.push(`
+Blurred elements: ${blurred.length}`);
+    blurred.slice(0, 15).forEach((b) => out.push(`  ${b}`));
+    return out.join("\n");
+  }
+
   // src/lib/ui.js
   var PREFIX = "pz-";
   function tag(name, props = {}, children = []) {
@@ -499,7 +552,8 @@
     onManage,
     onToggleAutozap,
     onToggleSite,
-    onShowLog
+    onShowLog,
+    onDiagnostics
   }) {
     const wrap = own(tag("div", { className: PREFIX + "control" }), "control");
     wrap.style.cssText = "position:fixed;bottom:12px;right:12px;z-index:2147483647;font:12px sans-serif;";
@@ -550,6 +604,7 @@
     item("learn", "\u{1F3AF} Learn a popup", onLearn);
     item("manage", "\u{1F4CB} Manage rules", onManage);
     item("log", "\u{1F4DC} Activity log", onShowLog);
+    if (onDiagnostics) item("diag", "\u{1F527} Copy diagnostics (debug)", onDiagnostics);
     badge.addEventListener("click", () => {
       menu.style.display = menu.style.display === "none" ? "block" : "none";
     });
@@ -816,6 +871,16 @@
       if (logPanel) renderLogPanel();
     });
   }
+  function copyDiagnostics() {
+    const report = collectDiagnostics(document);
+    try {
+      GM_setClipboard(report);
+      alert("Popup Zapper: diagnostics copied to clipboard. Paste them to share.");
+    } catch {
+      console.log("[Popup Zapper diagnostics]\n" + report);
+      alert("Popup Zapper: diagnostics logged to the console (press F12 to view).");
+    }
+  }
   function toggleSite() {
     const i = library.disabledDomains.indexOf(hostname);
     if (i >= 0) library.disabledDomains.splice(i, 1);
@@ -847,7 +912,8 @@
       onManage: toggleManage,
       onToggleAutozap: toggleAutozap,
       onToggleSite: toggleSite,
-      onShowLog: toggleLog
+      onShowLog: toggleLog,
+      onDiagnostics: copyDiagnostics
     });
     document.body.appendChild(control);
   }
@@ -856,6 +922,7 @@
     GM_registerMenuCommand("Manage rules", toggleManage);
     GM_registerMenuCommand("Toggle auto-zap (this site)", toggleAutozap);
     GM_registerMenuCommand("Show activity log", toggleLog);
+    GM_registerMenuCommand("Copy page diagnostics (debug)", copyDiagnostics);
     GM_registerMenuCommand("Toggle zapper (this site)", toggleSite);
   } catch {
   }

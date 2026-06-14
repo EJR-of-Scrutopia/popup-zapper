@@ -1,7 +1,7 @@
 export const HEADER = `// ==UserScript==
 // @name         Popup Zapper
 // @namespace    https://github.com/param/popup-zapper
-// @version      1.1.1
+// @version      1.1.2
 // @description  Remove login/consent/newsletter/paywall popups, restore blurred content, defeat reload traps, auto-zap overlays, and learn new popups by click.
 // @author       Param
 // @match        *://*/*
@@ -9,6 +9,7 @@ export const HEADER = `// ==UserScript==
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_registerMenuCommand
+// @grant        GM_setClipboard
 // @noframes
 // ==/UserScript==
 `;
