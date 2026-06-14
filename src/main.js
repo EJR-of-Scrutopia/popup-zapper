@@ -7,6 +7,7 @@ import { detectDegradation } from "./lib/restore.js";
 import { createActivityLog } from "./lib/log.js";
 import { collectDiagnostics } from "./lib/diagnostics.js";
 import { findPaywallHosts, buildUblockFilters } from "./lib/paywall-filters.js";
+import { resetMeter } from "./lib/meter.js";
 import {
   createControlMenu, createActivityPanel, createLearnerToolbar, createManagePanel,
   createFilterPanel,
@@ -231,6 +232,24 @@ function toggleAutozap() {
   runOnce();
 }
 
+function toggleResetMeter() {
+  const dom = domainEntry();
+  dom.resetMeter = !dom.resetMeter;
+  persist();
+  activityLog.add("meter", dom.resetMeter ? "reset-meter enabled (takes effect on reload)" : "reset-meter disabled");
+  refreshControl(true);
+  if (dom.resetMeter) maybeResetMeter();
+}
+
+// Wipe the gate's counter before the site's scripts read it, so this load looks
+// like a fresh visit. Runs at document-start when enabled for the domain.
+function maybeResetMeter() {
+  const dom = (library.domains || {})[hostname];
+  if (!dom || !dom.resetMeter) return;
+  const cleared = resetMeter(document, window);
+  if (cleared.length) activityLog.add("meter", `cleared ${cleared.length} meter key(s): ${cleared.join(", ")}`);
+}
+
 // ---- control menu ----
 let control = null;
 function refreshControl(open) {
@@ -239,11 +258,13 @@ function refreshControl(open) {
   control = createControlMenu({
     enabled: !library.disabledDomains.includes(hostname),
     autozap: !!(dom && dom.autozap),
+    resetMeter: !!(dom && dom.resetMeter),
     hostname,
     open: !!open,
     onLearn: startLearner,
     onManage: toggleManage,
     onToggleAutozap: toggleAutozap,
+    onToggleResetMeter: toggleResetMeter,
     onToggleSite: toggleSite,
     onShowLog: toggleLog,
     onDiagnostics: copyDiagnostics,
@@ -257,6 +278,7 @@ try {
   GM_registerMenuCommand("Learn a popup", startLearner);
   GM_registerMenuCommand("Manage rules", toggleManage);
   GM_registerMenuCommand("Toggle auto-zap (this site)", toggleAutozap);
+  GM_registerMenuCommand("Toggle reset-meter (this site)", toggleResetMeter);
   GM_registerMenuCommand("Show activity log", toggleLog);
   GM_registerMenuCommand("Freeze auth (block paywall via uBlock)", freezeAuth);
   GM_registerMenuCommand("Copy page diagnostics (debug)", copyDiagnostics);
@@ -264,6 +286,7 @@ try {
 } catch { /* not available in all managers */ }
 
 // ---- boot ----
+maybeResetMeter(); // wipe the gate counter at document-start, before page scripts run
 installReloadDefense();
 function boot() {
   runOnce();

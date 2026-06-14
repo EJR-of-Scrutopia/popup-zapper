@@ -16,8 +16,9 @@ function own(el, kind) {
 // A bottom-right badge that opens a small action menu on click. Replaces global
 // hotkeys (which collide with Brave's built-in shortcuts).
 export function createControlMenu({
-  enabled, autozap, hostname, open,
-  onLearn, onManage, onToggleAutozap, onToggleSite, onShowLog, onDiagnostics, onFreeze,
+  enabled, autozap, resetMeter, hostname, open,
+  onLearn, onManage, onToggleAutozap, onToggleResetMeter, onToggleSite,
+  onShowLog, onDiagnostics, onFreeze,
 }) {
   const wrap = own(tag("div", { className: PREFIX + "control" }), "control");
   wrap.style.cssText = "position:fixed;bottom:12px;right:12px;z-index:2147483647;font:12px sans-serif;";
@@ -75,6 +76,9 @@ export function createControlMenu({
     `🤖 Auto-zap: ${autozap ? "ON" : "OFF"}  —  tap to turn ${autozap ? "off" : "on"}`,
     onToggleAutozap,
   );
+  if (onToggleResetMeter) {
+    item("meter", `🍪 Reset meter: ${resetMeter ? "ON" : "OFF"}  —  tap to turn ${resetMeter ? "off" : "on"}`, onToggleResetMeter);
+  }
   if (onFreeze) item("freeze", "🧊 Freeze auth (block paywall)", onFreeze);
   item("learn", "🎯 Learn a popup", onLearn);
   item("manage", "📋 Manage rules", onManage);

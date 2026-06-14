@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Popup Zapper
 // @namespace    https://github.com/param/popup-zapper
-// @version      1.4.1
+// @version      1.5.0
 // @description  Remove login/consent/newsletter/paywall popups, restore blurred content, defeat reload traps, auto-zap overlays, and learn new popups by click.
 // @author       Param
 // @match        *://*/*
@@ -671,6 +671,49 @@ Blurred elements: ${blurred.length}`);
     return lines.join("\n");
   }
 
+  // src/lib/meter.js
+  var METER_KEYS = /paywall|meter|reg-?wall|hard-?wall|soft-?wall|freemium|article.?(count|views?|read)|(page|view|read|visit|article).?count|free.?(article|view|read)|content.?gate/i;
+  var AUTH_KEYS = /auth|session|token|login|logged|jwt|csrf|xsrf|\bsid\b|\buid\b|guid|remember|credential|oauth|sso|account|cart|checkout|consent|gdpr/i;
+  function shouldClear(key) {
+    if (!key) return false;
+    if (AUTH_KEYS.test(key)) return false;
+    return METER_KEYS.test(key);
+  }
+  function clearStorage(storage) {
+    if (!storage) return [];
+    const doomed = [];
+    try {
+      for (let i = 0; i < storage.length; i++) {
+        const k = storage.key(i);
+        if (shouldClear(k)) doomed.push(k);
+      }
+      for (const k of doomed) storage.removeItem(k);
+    } catch {
+    }
+    return doomed;
+  }
+  function clearCookies(doc) {
+    if (!doc || !doc.cookie) return [];
+    const cleared = [];
+    for (const pair of doc.cookie.split(";")) {
+      const name = pair.split("=")[0].trim();
+      if (shouldClear(name)) {
+        doc.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`;
+        cleared.push(name);
+      }
+    }
+    return cleared;
+  }
+  function resetMeter(doc, win) {
+    const cleared = [];
+    if (win) {
+      cleared.push(...clearStorage(win.localStorage));
+      cleared.push(...clearStorage(win.sessionStorage));
+    }
+    cleared.push(...clearCookies(doc));
+    return cleared;
+  }
+
   // src/lib/ui.js
   var PREFIX = "pz-";
   function tag(name, props = {}, children = []) {
@@ -686,11 +729,13 @@ Blurred elements: ${blurred.length}`);
   function createControlMenu({
     enabled,
     autozap,
+    resetMeter: resetMeter2,
     hostname: hostname2,
     open,
     onLearn,
     onManage,
     onToggleAutozap,
+    onToggleResetMeter,
     onToggleSite,
     onShowLog,
     onDiagnostics,
@@ -742,6 +787,9 @@ Blurred elements: ${blurred.length}`);
       `\u{1F916} Auto-zap: ${autozap ? "ON" : "OFF"}  \u2014  tap to turn ${autozap ? "off" : "on"}`,
       onToggleAutozap
     );
+    if (onToggleResetMeter) {
+      item("meter", `\u{1F36A} Reset meter: ${resetMeter2 ? "ON" : "OFF"}  \u2014  tap to turn ${resetMeter2 ? "off" : "on"}`, onToggleResetMeter);
+    }
     if (onFreeze) item("freeze", "\u{1F9CA} Freeze auth (block paywall)", onFreeze);
     item("learn", "\u{1F3AF} Learn a popup", onLearn);
     item("manage", "\u{1F4CB} Manage rules", onManage);
@@ -1103,6 +1151,20 @@ Blurred elements: ${blurred.length}`);
     refreshControl(true);
     runOnce();
   }
+  function toggleResetMeter() {
+    const dom = domainEntry();
+    dom.resetMeter = !dom.resetMeter;
+    persist();
+    activityLog.add("meter", dom.resetMeter ? "reset-meter enabled (takes effect on reload)" : "reset-meter disabled");
+    refreshControl(true);
+    if (dom.resetMeter) maybeResetMeter();
+  }
+  function maybeResetMeter() {
+    const dom = (library.domains || {})[hostname];
+    if (!dom || !dom.resetMeter) return;
+    const cleared = resetMeter(document, window);
+    if (cleared.length) activityLog.add("meter", `cleared ${cleared.length} meter key(s): ${cleared.join(", ")}`);
+  }
   var control = null;
   function refreshControl(open) {
     if (control) control.remove();
@@ -1110,11 +1172,13 @@ Blurred elements: ${blurred.length}`);
     control = createControlMenu({
       enabled: !library.disabledDomains.includes(hostname),
       autozap: !!(dom && dom.autozap),
+      resetMeter: !!(dom && dom.resetMeter),
       hostname,
       open: !!open,
       onLearn: startLearner,
       onManage: toggleManage,
       onToggleAutozap: toggleAutozap,
+      onToggleResetMeter: toggleResetMeter,
       onToggleSite: toggleSite,
       onShowLog: toggleLog,
       onDiagnostics: copyDiagnostics,
@@ -1126,12 +1190,14 @@ Blurred elements: ${blurred.length}`);
     GM_registerMenuCommand("Learn a popup", startLearner);
     GM_registerMenuCommand("Manage rules", toggleManage);
     GM_registerMenuCommand("Toggle auto-zap (this site)", toggleAutozap);
+    GM_registerMenuCommand("Toggle reset-meter (this site)", toggleResetMeter);
     GM_registerMenuCommand("Show activity log", toggleLog);
     GM_registerMenuCommand("Freeze auth (block paywall via uBlock)", freezeAuth);
     GM_registerMenuCommand("Copy page diagnostics (debug)", copyDiagnostics);
     GM_registerMenuCommand("Toggle zapper (this site)", toggleSite);
   } catch {
   }
+  maybeResetMeter();
   installReloadDefense();
   function boot() {
     runOnce();
