@@ -6,8 +6,10 @@ import { extractKeywords } from "./lib/extract.js";
 import { detectDegradation } from "./lib/restore.js";
 import { createActivityLog } from "./lib/log.js";
 import { collectDiagnostics } from "./lib/diagnostics.js";
+import { findPaywallHosts, buildUblockFilters } from "./lib/paywall-filters.js";
 import {
   createControlMenu, createActivityPanel, createLearnerToolbar, createManagePanel,
+  createFilterPanel,
 } from "./lib/ui.js";
 
 const getV = (k) => GM_getValue(k);
@@ -188,6 +190,26 @@ function copyDiagnostics() {
   }
 }
 
+// ---- freeze auth (generate uBlock paywall filters) ----
+let filterPanel = null;
+function freezeAuth() {
+  const hosts = findPaywallHosts(document, window.performance);
+  if (!hosts.length) {
+    alert("Popup Zapper: no known paywall/metering scripts detected on this page.");
+    return;
+  }
+  const filters = buildUblockFilters(hosts);
+  let copied = false;
+  try { GM_setClipboard(filters); copied = true; } catch { /* not granted */ }
+  activityLog.add("freeze", `found ${hosts.length} paywall host(s): ${hosts.join(", ")}`);
+  if (filterPanel) filterPanel.remove();
+  filterPanel = createFilterPanel({
+    filters, hosts, copied,
+    onClose: () => { if (filterPanel) { filterPanel.remove(); filterPanel = null; } },
+  });
+  document.body.appendChild(filterPanel);
+}
+
 // ---- toggles ----
 function toggleSite() {
   const i = library.disabledDomains.indexOf(hostname);
@@ -225,6 +247,7 @@ function refreshControl(open) {
     onToggleSite: toggleSite,
     onShowLog: toggleLog,
     onDiagnostics: copyDiagnostics,
+    onFreeze: freezeAuth,
   });
   document.body.appendChild(control);
 }
@@ -235,6 +258,7 @@ try {
   GM_registerMenuCommand("Manage rules", toggleManage);
   GM_registerMenuCommand("Toggle auto-zap (this site)", toggleAutozap);
   GM_registerMenuCommand("Show activity log", toggleLog);
+  GM_registerMenuCommand("Freeze auth (block paywall via uBlock)", freezeAuth);
   GM_registerMenuCommand("Copy page diagnostics (debug)", copyDiagnostics);
   GM_registerMenuCommand("Toggle zapper (this site)", toggleSite);
 } catch { /* not available in all managers */ }

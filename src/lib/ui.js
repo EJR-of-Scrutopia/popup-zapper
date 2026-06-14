@@ -17,7 +17,7 @@ function own(el, kind) {
 // hotkeys (which collide with Brave's built-in shortcuts).
 export function createControlMenu({
   enabled, autozap, hostname, open,
-  onLearn, onManage, onToggleAutozap, onToggleSite, onShowLog, onDiagnostics,
+  onLearn, onManage, onToggleAutozap, onToggleSite, onShowLog, onDiagnostics, onFreeze,
 }) {
   const wrap = own(tag("div", { className: PREFIX + "control" }), "control");
   wrap.style.cssText = "position:fixed;bottom:12px;right:12px;z-index:2147483647;font:12px sans-serif;";
@@ -75,6 +75,7 @@ export function createControlMenu({
     `🤖 Auto-zap: ${autozap ? "ON" : "OFF"}  —  tap to turn ${autozap ? "off" : "on"}`,
     onToggleAutozap,
   );
+  if (onFreeze) item("freeze", "🧊 Freeze auth (block paywall)", onFreeze);
   item("learn", "🎯 Learn a popup", onLearn);
   item("manage", "📋 Manage rules", onManage);
   item("log", "📜 Activity log", onShowLog);
@@ -87,6 +88,50 @@ export function createControlMenu({
   wrap.appendChild(badge);
   wrap.appendChild(menu);
   return wrap;
+}
+
+// Panel showing generated uBlock filters + how to apply them (Freeze auth).
+export function createFilterPanel({ filters, hosts, copied, onClose }) {
+  const panel = own(tag("div", { className: PREFIX + "filters" }), "filters");
+  panel.style.cssText =
+    "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:2147483647;" +
+    "background:#fff;color:#111;padding:16px;border-radius:10px;width:440px;max-width:92vw;" +
+    "font:13px sans-serif;box-shadow:0 4px 24px rgba(0,0,0,.5);";
+
+  const head = tag("div");
+  head.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;";
+  head.appendChild(tag("strong", { textContent: "🧊 Freeze auth — block this paywall" }));
+  const cls = tag("button", { textContent: "✕" });
+  cls.setAttribute("data-act", "close");
+  cls.style.cssText = "border:0;background:none;font-size:16px;cursor:pointer;";
+  cls.addEventListener("click", onClose);
+  head.appendChild(cls);
+  panel.appendChild(head);
+
+  panel.appendChild(tag("div", {
+    textContent: `Found ${hosts.length} paywall/metering host(s) on this page${copied ? " — copied to your clipboard." : "."}`,
+    style: "margin-bottom:8px;color:#333;",
+  }));
+
+  const area = tag("textarea");
+  area.value = filters;
+  area.readOnly = true;
+  area.style.cssText = "width:100%;height:96px;font:12px monospace;box-sizing:border-box;" +
+    "border:1px solid #ccc;border-radius:6px;padding:8px;resize:vertical;";
+  area.addEventListener("focus", () => area.select());
+  panel.appendChild(area);
+
+  const steps = tag("ol");
+  steps.style.cssText = "margin:10px 0 0 0;padding-left:20px;color:#333;line-height:1.6;";
+  for (const s of [
+    "Open uBlock Origin → Dashboard (the gears icon).",
+    'Go to the "My filters" tab.',
+    "Paste the lines above (already copied) at the end.",
+    'Click "Apply changes", then reload this page.',
+  ]) steps.appendChild(tag("li", { textContent: s }));
+  panel.appendChild(steps);
+
+  return panel;
 }
 
 // Live activity panel showing what the zapper did / could not do.

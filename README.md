@@ -28,6 +28,10 @@ to avoid clashing with Brave's built-in shortcuts.
   learning needed. Off by default; heuristic, so check the activity log.
 - **Activity log** — live view of what was removed, de-blurred, rejected, or blocked
   (and a hint when nothing matched).
+- **Freeze auth (block paywall)** — scans the page for known metering/paywall vendors
+  (Piano/tinypass, Poool, Pelcro, Zephr, etc.), generates uBlock Origin filter lines,
+  copies them to the clipboard, and shows how to paste them into uBlock so the site's
+  meter is blocked permanently. (For metered content that downgrades after load.)
 - **Disable on this site** — per-site on/off switch.
 
 Tracker cleanup (delete analytics cookies/storage after consent) can be toggled per

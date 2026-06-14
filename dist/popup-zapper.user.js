@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Popup Zapper
 // @namespace    https://github.com/param/popup-zapper
-// @version      1.2.0
+// @version      1.3.0
 // @description  Remove login/consent/newsletter/paywall popups, restore blurred content, defeat reload traps, auto-zap overlays, and learn new popups by click.
 // @author       Param
 // @match        *://*/*
@@ -578,6 +578,57 @@ Blurred elements: ${blurred.length}`);
     return out.join("\n");
   }
 
+  // src/lib/paywall-filters.js
+  var PAYWALL_VENDORS = [
+    /piano\.io/i,
+    /tinypass\.com/i,
+    /npttech\.com/i,
+    // Piano infra
+    /cxense\.com/i,
+    // Piano/Cxense data
+    /cxpublic\.com/i,
+    /poool\.(fr|tech)/i,
+    /pelcro\.com/i,
+    /qiota/i,
+    /zephr\.(io|com)/i,
+    /evolok/i,
+    /blueconic/i,
+    /getadmiral\.com/i,
+    /leakypaywall/i,
+    /sophi\.io/i,
+    /mather(economics)?\./i
+  ];
+  function findPaywallHosts(doc, perf) {
+    const urls = /* @__PURE__ */ new Set();
+    try {
+      const entries = perf && perf.getEntriesByType ? perf.getEntriesByType("resource") : [];
+      for (const e of entries) if (e && e.name) urls.add(e.name);
+    } catch {
+    }
+    for (const el of doc.querySelectorAll("script[src],iframe[src],link[href]")) {
+      const u = el.getAttribute("src") || el.getAttribute("href");
+      if (u) urls.add(u);
+    }
+    const base = doc.baseURI || doc.location && doc.location.href || "https://example.com";
+    const hosts = /* @__PURE__ */ new Set();
+    for (const u of urls) {
+      let host;
+      try {
+        host = new URL(u, base).hostname;
+      } catch {
+        continue;
+      }
+      if (host && PAYWALL_VENDORS.some((re) => re.test(host))) hosts.add(host);
+    }
+    return [...hosts].sort();
+  }
+  function buildUblockFilters(hosts) {
+    if (!hosts || !hosts.length) return "";
+    const lines = ["! Popup Zapper \u2014 paywall/metering blockers"];
+    for (const h of hosts) lines.push(`||${h}^`);
+    return lines.join("\n");
+  }
+
   // src/lib/ui.js
   var PREFIX = "pz-";
   function tag(name, props = {}, children = []) {
@@ -600,7 +651,8 @@ Blurred elements: ${blurred.length}`);
     onToggleAutozap,
     onToggleSite,
     onShowLog,
-    onDiagnostics
+    onDiagnostics,
+    onFreeze
   }) {
     const wrap = own(tag("div", { className: PREFIX + "control" }), "control");
     wrap.style.cssText = "position:fixed;bottom:12px;right:12px;z-index:2147483647;font:12px sans-serif;";
@@ -648,6 +700,7 @@ Blurred elements: ${blurred.length}`);
       `\u{1F916} Auto-zap: ${autozap ? "ON" : "OFF"}  \u2014  tap to turn ${autozap ? "off" : "on"}`,
       onToggleAutozap
     );
+    if (onFreeze) item("freeze", "\u{1F9CA} Freeze auth (block paywall)", onFreeze);
     item("learn", "\u{1F3AF} Learn a popup", onLearn);
     item("manage", "\u{1F4CB} Manage rules", onManage);
     item("log", "\u{1F4DC} Activity log", onShowLog);
@@ -658,6 +711,39 @@ Blurred elements: ${blurred.length}`);
     wrap.appendChild(badge);
     wrap.appendChild(menu);
     return wrap;
+  }
+  function createFilterPanel({ filters, hosts, copied, onClose }) {
+    const panel2 = own(tag("div", { className: PREFIX + "filters" }), "filters");
+    panel2.style.cssText = "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:2147483647;background:#fff;color:#111;padding:16px;border-radius:10px;width:440px;max-width:92vw;font:13px sans-serif;box-shadow:0 4px 24px rgba(0,0,0,.5);";
+    const head = tag("div");
+    head.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;";
+    head.appendChild(tag("strong", { textContent: "\u{1F9CA} Freeze auth \u2014 block this paywall" }));
+    const cls = tag("button", { textContent: "\u2715" });
+    cls.setAttribute("data-act", "close");
+    cls.style.cssText = "border:0;background:none;font-size:16px;cursor:pointer;";
+    cls.addEventListener("click", onClose);
+    head.appendChild(cls);
+    panel2.appendChild(head);
+    panel2.appendChild(tag("div", {
+      textContent: `Found ${hosts.length} paywall/metering host(s) on this page${copied ? " \u2014 copied to your clipboard." : "."}`,
+      style: "margin-bottom:8px;color:#333;"
+    }));
+    const area = tag("textarea");
+    area.value = filters;
+    area.readOnly = true;
+    area.style.cssText = "width:100%;height:96px;font:12px monospace;box-sizing:border-box;border:1px solid #ccc;border-radius:6px;padding:8px;resize:vertical;";
+    area.addEventListener("focus", () => area.select());
+    panel2.appendChild(area);
+    const steps = tag("ol");
+    steps.style.cssText = "margin:10px 0 0 0;padding-left:20px;color:#333;line-height:1.6;";
+    for (const s of [
+      "Open uBlock Origin \u2192 Dashboard (the gears icon).",
+      'Go to the "My filters" tab.',
+      "Paste the lines above (already copied) at the end.",
+      'Click "Apply changes", then reload this page.'
+    ]) steps.appendChild(tag("li", { textContent: s }));
+    panel2.appendChild(steps);
+    return panel2;
   }
   function createActivityPanel({ entries, onClear, onClose }) {
     const panel2 = own(tag("div", { className: PREFIX + "log" }), "log");
@@ -928,6 +1014,35 @@ Blurred elements: ${blurred.length}`);
       alert("Popup Zapper: diagnostics logged to the console (press F12 to view).");
     }
   }
+  var filterPanel = null;
+  function freezeAuth() {
+    const hosts = findPaywallHosts(document, window.performance);
+    if (!hosts.length) {
+      alert("Popup Zapper: no known paywall/metering scripts detected on this page.");
+      return;
+    }
+    const filters = buildUblockFilters(hosts);
+    let copied = false;
+    try {
+      GM_setClipboard(filters);
+      copied = true;
+    } catch {
+    }
+    activityLog.add("freeze", `found ${hosts.length} paywall host(s): ${hosts.join(", ")}`);
+    if (filterPanel) filterPanel.remove();
+    filterPanel = createFilterPanel({
+      filters,
+      hosts,
+      copied,
+      onClose: () => {
+        if (filterPanel) {
+          filterPanel.remove();
+          filterPanel = null;
+        }
+      }
+    });
+    document.body.appendChild(filterPanel);
+  }
   function toggleSite() {
     const i = library.disabledDomains.indexOf(hostname);
     if (i >= 0) library.disabledDomains.splice(i, 1);
@@ -960,7 +1075,8 @@ Blurred elements: ${blurred.length}`);
       onToggleAutozap: toggleAutozap,
       onToggleSite: toggleSite,
       onShowLog: toggleLog,
-      onDiagnostics: copyDiagnostics
+      onDiagnostics: copyDiagnostics,
+      onFreeze: freezeAuth
     });
     document.body.appendChild(control);
   }
@@ -969,6 +1085,7 @@ Blurred elements: ${blurred.length}`);
     GM_registerMenuCommand("Manage rules", toggleManage);
     GM_registerMenuCommand("Toggle auto-zap (this site)", toggleAutozap);
     GM_registerMenuCommand("Show activity log", toggleLog);
+    GM_registerMenuCommand("Freeze auth (block paywall via uBlock)", freezeAuth);
     GM_registerMenuCommand("Copy page diagnostics (debug)", copyDiagnostics);
     GM_registerMenuCommand("Toggle zapper (this site)", toggleSite);
   } catch {
