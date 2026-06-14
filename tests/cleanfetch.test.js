@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { extractCleanContent, applyCleanContent } from "../src/lib/cleanfetch.js";
+import { extractCleanContent, applyCleanContent, buildCleanDocument } from "../src/lib/cleanfetch.js";
 
 beforeEach(() => { document.body.innerHTML = ""; });
 
@@ -15,6 +15,22 @@ describe("extractCleanContent", () => {
 
   it("returns null for empty input", () => {
     expect(extractCleanContent("")).toBeNull();
+  });
+});
+
+describe("buildCleanDocument", () => {
+  it("strips scripts, removes paywall elements, and adds a base href", () => {
+    const html = `<html><head><title>T</title><script>gate()</script></head>` +
+      `<body><div class="paywall-modal">PAY</div><article>${"word ".repeat(200)}</article></body></html>`;
+    const out = buildCleanDocument(html, "https://site.com/a");
+    expect(out).not.toContain("gate()");
+    expect(out).not.toContain("PAY");
+    expect(out).toContain('href="https://site.com/a"');
+    expect(out).toContain("article");
+  });
+
+  it("returns null for empty input", () => {
+    expect(buildCleanDocument("", "https://x")).toBeNull();
   });
 });
 

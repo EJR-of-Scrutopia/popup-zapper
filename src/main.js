@@ -9,7 +9,7 @@ import { collectDiagnostics } from "./lib/diagnostics.js";
 import { findPaywallHosts, buildUblockFilters } from "./lib/paywall-filters.js";
 import { resetMeter } from "./lib/meter.js";
 import { captureSnapshot, restoreSnapshot } from "./lib/freeze.js";
-import { extractCleanContent, applyCleanContent } from "./lib/cleanfetch.js";
+import { extractCleanContent, buildCleanDocument } from "./lib/cleanfetch.js";
 import {
   createControlMenu, createActivityPanel, createLearnerToolbar, createManagePanel,
   createFilterPanel,
@@ -280,17 +280,20 @@ function fetchCleanCopy() {
     onload: (res) => {
       try {
         const extracted = extractCleanContent(res.responseText);
-        if (extracted && applyCleanContent(document, extracted)) {
-          if (extracted.title) document.title = extracted.title;
-          try { captureSnapshot(document, window.sessionStorage, true); } catch { /* ignore */ }
-          activityLog.add("clean", `applied clean copy (${extracted.len} chars)`);
-          alert("Popup Zapper: fetched a clean copy. It's static — links/galleries may not work, but the text/images should be readable.");
-        } else {
-          activityLog.add("clean", "no fuller content in the clean copy (gate may not be cookie-based)");
+        if (!extracted || extracted.len < 400) {
+          activityLog.add("clean", "cookie-free copy was also gated (server-side per account/IP)");
           alert("Popup Zapper: the cookie-free copy was also gated, so this site decides server-side (per account/IP). Can't bypass that.");
+          return;
         }
+        const cleanHtml = buildCleanDocument(res.responseText, location.href);
+        if (!cleanHtml) { alert("Popup Zapper: couldn't build the clean copy."); return; }
+        const url = URL.createObjectURL(new Blob([cleanHtml], { type: "text/html" }));
+        activityLog.add("clean", `opening cleaned copy (${extracted.len} chars) in a script-free page`);
+        // Open in a new tab if allowed (keeps the original); else replace this one.
+        const win = window.open(url, "_blank");
+        if (!win) window.location.href = url; // href setter isn't blocked by our guard
       } catch {
-        activityLog.add("clean", "error applying clean copy");
+        activityLog.add("clean", "error building clean copy");
       }
     },
     onerror: () => {

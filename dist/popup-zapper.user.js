@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Popup Zapper
 // @namespace    https://github.com/param/popup-zapper
-// @version      1.8.0
+// @version      1.9.0
 // @description  Remove login/consent/newsletter/paywall popups, restore blurred content, defeat reload traps, auto-zap overlays, and learn new popups by click.
 // @author       Param
 // @match        *://*/*
@@ -845,18 +845,33 @@ Blurred elements: ${blurred.length}`);
       len: (picked.el.textContent || "").trim().length
     };
   }
-  function applyCleanContent(doc, extracted) {
-    if (!extracted || !extracted.html) return false;
-    let el;
+  function buildCleanDocument(htmlString, baseUrl) {
+    if (!htmlString) return null;
+    let doc;
     try {
-      el = doc.querySelector(extracted.sel);
+      doc = new DOMParser().parseFromString(htmlString, "text/html");
     } catch {
-      el = null;
+      return null;
     }
-    if (!el) el = doc.body;
-    if (!el) return false;
-    el.innerHTML = extracted.html;
-    return true;
+    if (!doc || !doc.documentElement) return null;
+    doc.querySelectorAll("script,noscript").forEach((n) => n.remove());
+    doc.querySelectorAll(
+      '[class*="paywall" i],[class*="regwall" i],[class*="gate" i],[id*="paywall" i],[id*="regwall" i]'
+    ).forEach((n) => n.remove());
+    if (baseUrl && doc.head) {
+      let base = doc.querySelector("base");
+      if (!base) {
+        base = doc.createElement("base");
+        doc.head.insertBefore(base, doc.head.firstChild);
+      }
+      base.setAttribute("href", baseUrl);
+    }
+    if (doc.body) {
+      doc.body.style.overflow = "auto";
+      doc.body.style.position = "static";
+    }
+    doc.documentElement.style.overflow = "auto";
+    return "<!DOCTYPE html>" + doc.documentElement.outerHTML;
   }
 
   // src/lib/ui.js
@@ -1340,20 +1355,22 @@ Blurred elements: ${blurred.length}`);
       onload: (res) => {
         try {
           const extracted = extractCleanContent(res.responseText);
-          if (extracted && applyCleanContent(document, extracted)) {
-            if (extracted.title) document.title = extracted.title;
-            try {
-              captureSnapshot(document, window.sessionStorage, true);
-            } catch {
-            }
-            activityLog.add("clean", `applied clean copy (${extracted.len} chars)`);
-            alert("Popup Zapper: fetched a clean copy. It's static \u2014 links/galleries may not work, but the text/images should be readable.");
-          } else {
-            activityLog.add("clean", "no fuller content in the clean copy (gate may not be cookie-based)");
+          if (!extracted || extracted.len < 400) {
+            activityLog.add("clean", "cookie-free copy was also gated (server-side per account/IP)");
             alert("Popup Zapper: the cookie-free copy was also gated, so this site decides server-side (per account/IP). Can't bypass that.");
+            return;
           }
+          const cleanHtml = buildCleanDocument(res.responseText, location.href);
+          if (!cleanHtml) {
+            alert("Popup Zapper: couldn't build the clean copy.");
+            return;
+          }
+          const url = URL.createObjectURL(new Blob([cleanHtml], { type: "text/html" }));
+          activityLog.add("clean", `opening cleaned copy (${extracted.len} chars) in a script-free page`);
+          const win = window.open(url, "_blank");
+          if (!win) window.location.href = url;
         } catch {
-          activityLog.add("clean", "error applying clean copy");
+          activityLog.add("clean", "error building clean copy");
         }
       },
       onerror: () => {
