@@ -161,6 +161,26 @@ Try a real **Reject all / Decline** click first (genuine opt-out). Only if no
 reject control exists, hide the banner + restore the page. Never fabricate an
 "accept".
 
+## Tracker handling — delegation + thin cleanup
+
+**Network-level tracker blocking is delegated, not rebuilt.** A userscript runs
+inside the page and cannot reliably intercept all network requests. The proper
+tools — already available — are **Brave Shields** (on by default; blocks
+third-party trackers and cross-site cookies) and **uBlock Origin** (EasyPrivacy
++ tracker lists). Users should run both; this script does not duplicate them.
+
+What the script *does* add is a thin **post-consent cleanup** pass that runs
+after a banner is dismissed/rejected:
+
+- delete cookies and `localStorage`/`sessionStorage` entries the site set for
+  known analytics/consent keys (configurable key/domain list)
+- neutralize obvious first-party analytics calls (`navigator.sendBeacon`,
+  `fetch`/`XHR` to known analytics endpoints) — best-effort, complementary to
+  uBlock, not a replacement
+
+This pass is **off by default per site** unless enabled, to avoid breaking sites
+that legitimately need their storage.
+
 ## Controls
 
 - `Alt+Shift+P` — arm learner
@@ -199,3 +219,6 @@ reject control exists, hide the banner + restore the page. Never fabricate an
 - Auto-promotion suggestions when a per-site rule fires across many domains.
 - Sync library via a hosted gist instead of file export/import.
 - Per-rule statistics (how often each fires).
+- **Burner credentials module (Phase 2)** — see
+  `2026-06-14-burner-credentials-design.md`. Depends on this v1's wall detection
+  and storage conventions.
