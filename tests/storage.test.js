@@ -30,7 +30,7 @@ describe("storage", () => {
 
   it("saveLibrary serializes via the injected setter", () => {
     let saved = null;
-    saveLibrary((v) => { saved = v; }, DEFAULT_LIBRARY);
+    saveLibrary((key, v) => { saved = v; }, DEFAULT_LIBRARY);
     expect(JSON.parse(saved).version).toBe(1);
   });
 });

@@ -31,7 +31,7 @@ export function loadLibrary(getValue) {
 }
 
 export function saveLibrary(setValue, library) {
-  setValue(JSON.stringify(library));
+  setValue("popupZapper.library", JSON.stringify(library));
 }
 
 function clone(obj) {
