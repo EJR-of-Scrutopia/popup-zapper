@@ -64,14 +64,24 @@ describe("runBlocker", () => {
     expect(document.querySelector("#real-image")).not.toBeNull();
   });
 
-  it("auto-zap unlocks gated content: removes register gate and clears truncation", () => {
+  it("auto-zap removes the register gate overlay (max-height clearing moved to Reveal)", () => {
     document.body.innerHTML =
       `<div id="gate" style="position:fixed">Register to continue reading this article</div>` +
       `<article id="body" style="max-height:200px;overflow:hidden">${"word ".repeat(200)}</article>`;
     const azLib = { ...lib, domains: { "site.com": { rules: [], autozap: true } } };
     runBlocker({ doc: document, library: azLib, hostname: "site.com" });
     expect(document.querySelector("#gate")).toBeNull();
-    expect(document.querySelector("#body").style.maxHeight).toBe("none");
+    // Truncation is intentionally left for the manual Reveal action (see reveal.js).
+    expect(document.querySelector("#body").style.maxHeight).not.toBe("none");
+  });
+
+  it("removes a full-viewport Piano veil overlay in the default pass", () => {
+    document.body.innerHTML =
+      `<div class="piano-meter-overlay" style="position:fixed;z-index:99999"></div>` +
+      `<article>${"word ".repeat(200)}</article>`;
+    runBlocker({ doc: document, library: lib, hostname: "archdaily.com" });
+    expect(document.querySelector(".piano-meter-overlay")).toBeNull();
+    expect(document.querySelector("article")).not.toBeNull();
   });
 
   it("auto-zap leaves empty/text-less overlays and site UI alone", () => {

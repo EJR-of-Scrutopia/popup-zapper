@@ -1,5 +1,6 @@
 import { getActiveRules, findMatches, matchesRule } from "./rules.js";
-import { restoreElement, restorePage, restoreBlur } from "./restore.js";
+import { restorePage, restoreBlur } from "./restore.js";
+import { removeVeils } from "./paywall-veil.js";
 import { findRejectButton, CMP_SELECTORS } from "./consent.js";
 import { findBestGuess } from "./learner.js";
 import { removePaywallFrames } from "./frames.js";
@@ -87,34 +88,20 @@ function unlockContent(doc, whitelist, log) {
     }
   }
 
-  // 2. Clear max-height truncation on long-text containers (the "read more" clamp).
-  for (const el of doc.body.querySelectorAll("*")) {
-    if (skip(el, whitelist)) continue;
-    let cs; try { cs = win.getComputedStyle(el); } catch { continue; }
-    const mh = parseFloat(cs.maxHeight);
-    const clipped = /hidden|clip/.test(cs.overflow) || /hidden|clip/.test(cs.overflowY);
-    if (!Number.isNaN(mh) && cs.maxHeight !== "none" && mh < 2000 && clipped) {
-      if ((el.textContent || "").length > 600) {
-        el.style.setProperty("max-height", "none", "important");
-        el.style.setProperty("overflow", "visible", "important");
-        changes++;
-      }
-    }
-  }
+  // Note: max-height truncation clearing and opacity/pointer-events restore are
+  // NOT done here — they can break legitimate pages, so they live in the manual
+  // "Reveal (deeper)" action (see reveal.js), surfaced only when residual gating
+  // is detected.
 
   if (changes) log("unlock", `unlocked gated content (${changes} change(s))`);
 }
 
 function restorePass(doc, whitelist, log) {
   restorePage(doc);
-  // Conservative inline restore for opacity / pointer-events locks.
-  for (const el of doc.body.querySelectorAll("*")) {
-    if (skip(el, whitelist)) continue;
-    const style = el.getAttribute && el.getAttribute("style");
-    if (style && /pointer-events\s*:\s*none|opacity\s*:\s*0/i.test(style)) {
-      safe(() => restoreElement(el));
-    }
-  }
+  // Page-wide veil removal: full-screen fixed metering overlays that blur the
+  // page behind them (e.g. ArchDaily's Piano overlay). Safe — very rarely legit.
+  const veils = safeVal(() => removeVeils(doc, (el) => skip(el, whitelist)), []);
+  if (veils.length) log("paywall", `removed ${veils.length} veil overlay(s): ${veils.join(", ")}`);
   // Page-wide blur removal (catches stylesheet-class blur).
   const n = safeVal(() => restoreBlur(doc, (el) => skip(el, whitelist)), 0);
   if (n) log("deblur", `removed blur from ${n} element(s)`);

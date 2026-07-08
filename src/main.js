@@ -101,7 +101,16 @@ function startObserver() {
     pending = true;
     requestAnimationFrame(() => { pending = false; runOnce(); });
   });
-  obs.observe(document.documentElement, { childList: true, subtree: true });
+  // Watch attribute changes too: metering gates (e.g. ArchDaily's Piano) apply
+  // blur/veil by toggling a class or inline style on an existing element — no
+  // node is inserted — so a childList-only observer would never re-run the
+  // de-blur pass. The rAF debounce above coalesces the extra callbacks.
+  obs.observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["style", "class"],
+  });
 }
 
 // ---- learner engine ----
