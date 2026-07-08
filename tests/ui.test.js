@@ -1,39 +1,118 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
-  createControlMenu, createActivityPanel, createLearnerToolbar, createManagePanel,
+  createControlMenu, createSettingsPanel, createPickerToolbar, createActivityPanel,
 } from "../src/lib/ui.js";
 
 beforeEach(() => { document.body.innerHTML = ""; });
 
 describe("createControlMenu", () => {
-  it("renders actions and fires their handlers", () => {
+  it("renders the three primary buttons and fires their handlers", () => {
     const h = {
-      onLearn: vi.fn(), onManage: vi.fn(), onToggleUnlock: vi.fn(),
-      onToggleSite: vi.fn(), onShowLog: vi.fn(),
+      onToggleSite: vi.fn(), onBlock: vi.fn(), onRemovePaywall: vi.fn(),
+      onRevert: vi.fn(), onReveal: vi.fn(), onSettings: vi.fn(),
     };
-    const ctrl = createControlMenu({ enabled: true, unlock: false, ...h });
+    const ctrl = createControlMenu({
+      enabled: true, hostname: "x.com", open: true, status: "✓ Blocked div.modal",
+      showReveal: false, ...h,
+    });
     document.body.appendChild(ctrl);
-    ctrl.querySelector("[data-act='menu']").click(); // open
-    ctrl.querySelector("[data-act='learn']").click();
-    ctrl.querySelector("[data-act='manage']").click();
-    ctrl.querySelector("[data-act='unlock']").click();
-    ctrl.querySelector("[data-act='log']").click();
+    ctrl.querySelector("[data-act='block']").click();
+    ctrl.querySelector("[data-act='paywall']").click();
+    ctrl.querySelector("[data-act='revert']").click();
     ctrl.querySelector("[data-act='site']").click();
-    expect(h.onLearn).toHaveBeenCalledOnce();
-    expect(h.onManage).toHaveBeenCalledOnce();
-    expect(h.onToggleUnlock).toHaveBeenCalledOnce();
-    expect(h.onShowLog).toHaveBeenCalledOnce();
+    ctrl.querySelector("[data-act='settings']").click();
+    expect(h.onBlock).toHaveBeenCalledOnce();
+    expect(h.onRemovePaywall).toHaveBeenCalledOnce();
+    expect(h.onRevert).toHaveBeenCalledOnce();
     expect(h.onToggleSite).toHaveBeenCalledOnce();
+    expect(h.onSettings).toHaveBeenCalledOnce();
+  });
+
+  it("shows the status strip text and hides Reveal unless showReveal", () => {
+    const ctrl = createControlMenu({
+      enabled: true, hostname: "x.com", open: true, status: "✓ Blocked div.modal",
+      showReveal: false,
+      onToggleSite() {}, onBlock() {}, onRemovePaywall() {}, onRevert() {}, onReveal() {}, onSettings() {},
+    });
+    expect(ctrl.textContent).toContain("✓ Blocked div.modal");
+    expect(ctrl.querySelector("[data-act='reveal']")).toBeNull();
+  });
+
+  it("shows Reveal when showReveal is true", () => {
+    const onReveal = vi.fn();
+    const ctrl = createControlMenu({
+      enabled: true, hostname: "x.com", open: true, status: "", showReveal: true,
+      onToggleSite() {}, onBlock() {}, onRemovePaywall() {}, onRevert() {}, onReveal, onSettings() {},
+    });
+    const btn = ctrl.querySelector("[data-act='reveal']");
+    expect(btn).not.toBeNull();
+    btn.click();
+    expect(onReveal).toHaveBeenCalledOnce();
   });
 
   it("reflects disabled state in the badge label", () => {
-    const ctrl = createControlMenu({ enabled: false, unlock: false });
+    const ctrl = createControlMenu({
+      enabled: false, hostname: "x.com", open: false, status: "",
+      onToggleSite() {}, onBlock() {}, onRemovePaywall() {}, onRevert() {}, onReveal() {}, onSettings() {},
+    });
     expect(ctrl.querySelector("[data-act='menu']").textContent).toMatch(/off/i);
   });
+});
 
-  it("shows Unlock mode ON when enabled", () => {
-    const ctrl = createControlMenu({ enabled: true, unlock: true, onToggleUnlock() {} });
-    expect(ctrl.querySelector("[data-act='unlock']").textContent).toMatch(/on/i);
+describe("createSettingsPanel", () => {
+  const base = {
+    hostname: "x.com", version: "2.0.0",
+    onToggleRule: () => {}, onEditRule: () => {}, onDeleteRule: () => {}, onPromoteRule: () => {},
+    onToggleCleanup: () => {}, onCheckUpdates: () => {}, onShowLog: () => {}, onDiagnostics: () => {}, onClose: () => {},
+  };
+
+  it("lists rules with toggles and shows the version", () => {
+    const library = { global: [], domains: { "x.com": { rules: [{ type: "class", value: "modal", enabled: true }] } } };
+    const el = createSettingsPanel({ ...base, library });
+    expect(el.textContent).toContain("class: modal");
+    expect(el.textContent).toContain("2.0.0");
+    expect(el.querySelector("[data-act='toggle-rule']")).not.toBeNull();
+    expect(el.querySelector("[data-act='edit-rule']")).not.toBeNull();
+    expect(el.querySelector("[data-act='delete-rule']")).not.toBeNull();
+  });
+
+  it("fires onToggleRule with the new enabled state", () => {
+    const onToggleRule = vi.fn();
+    const rule = { type: "class", value: "modal", enabled: true };
+    const library = { global: [], domains: { "x.com": { rules: [rule] } } };
+    const el = createSettingsPanel({ ...base, library, onToggleRule });
+    const cb = el.querySelector("[data-act='toggle-rule']");
+    cb.checked = false;
+    cb.dispatchEvent(new window.Event("change"));
+    expect(onToggleRule).toHaveBeenCalledWith({ rule, scope: "site", enabled: false });
+  });
+
+  it("fires onCheckUpdates", () => {
+    const onCheckUpdates = vi.fn();
+    const library = { global: [], domains: {} };
+    const el = createSettingsPanel({ ...base, library, onCheckUpdates });
+    el.querySelector("[data-act='check-updates']").click();
+    expect(onCheckUpdates).toHaveBeenCalledOnce();
+  });
+});
+
+describe("createPickerToolbar", () => {
+  it("wires nav + block(all-sites flag) + cancel", () => {
+    const h = {
+      onPrev: vi.fn(), onNext: vi.fn(), onGrow: vi.fn(), onShrink: vi.fn(),
+      onBlock: vi.fn(), onCancel: vi.fn(),
+    };
+    const bar = createPickerToolbar(h);
+    document.body.appendChild(bar);
+    bar.querySelector("[data-act='next']").click();
+    bar.querySelector("[data-act='grow']").click();
+    bar.querySelector("[data-act='all-sites']").checked = true;
+    bar.querySelector("[data-act='block']").click();
+    bar.querySelector("[data-act='cancel']").click();
+    expect(h.onNext).toHaveBeenCalledOnce();
+    expect(h.onGrow).toHaveBeenCalledOnce();
+    expect(h.onBlock).toHaveBeenCalledWith(true); // apply-all checked
+    expect(h.onCancel).toHaveBeenCalledOnce();
   });
 });
 
@@ -53,35 +132,5 @@ describe("createActivityPanel", () => {
   it("shows a helpful message when empty", () => {
     const panel = createActivityPanel({ entries: [], onClear() {}, onClose() {} });
     expect(panel.textContent).toMatch(/nothing yet/i);
-  });
-});
-
-describe("createLearnerToolbar", () => {
-  it("wires confirm / pick / cancel buttons", () => {
-    const onConfirm = vi.fn(), onPick = vi.fn(), onCancel = vi.fn();
-    const bar = createLearnerToolbar({ onConfirm, onPick, onCancel });
-    document.body.appendChild(bar);
-    bar.querySelector("[data-act='confirm']").click();
-    bar.querySelector("[data-act='pick']").click();
-    bar.querySelector("[data-act='cancel']").click();
-    expect(onConfirm).toHaveBeenCalledOnce();
-    expect(onPick).toHaveBeenCalledOnce();
-    expect(onCancel).toHaveBeenCalledOnce();
-  });
-});
-
-describe("createManagePanel", () => {
-  it("lists rules and fires delete/promote callbacks", () => {
-    const onDelete = vi.fn(), onPromote = vi.fn();
-    const lib = {
-      global: [{ type: "class", value: "g1", action: "remove" }],
-      domains: { "site.com": { rules: [{ type: "id", value: "d1", action: "hide" }] } },
-    };
-    const panel = createManagePanel({ library: lib, hostname: "site.com", onDelete, onPromote });
-    document.body.appendChild(panel);
-    expect(panel.textContent).toContain("g1");
-    expect(panel.textContent).toContain("d1");
-    panel.querySelector("[data-act='delete']").click();
-    expect(onDelete).toHaveBeenCalled();
   });
 });

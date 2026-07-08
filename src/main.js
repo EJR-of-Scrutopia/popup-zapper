@@ -1,31 +1,60 @@
 import { loadLibrary, saveLibrary } from "./lib/storage.js";
 import { runBlocker } from "./lib/blocker.js";
 import { createReloadGuard } from "./lib/reload-guard.js";
-import { findBestGuess } from "./lib/learner.js";
 import { extractKeywords } from "./lib/extract.js";
-import { detectDegradation } from "./lib/restore.js";
 import { createActivityLog } from "./lib/log.js";
 import { collectDiagnostics } from "./lib/diagnostics.js";
 import { findPaywallHosts, buildUblockFilters } from "./lib/paywall-filters.js";
 import { resetMeter } from "./lib/meter.js";
-import { captureSnapshot, restoreSnapshot } from "./lib/freeze.js";
+import { captureSnapshot } from "./lib/freeze.js";
 import { extractCleanContent, buildCleanDocument } from "./lib/cleanfetch.js";
+import { createPicker } from "./lib/picker.js";
+import { createUndoStack } from "./lib/undo.js";
+import { revealDeep, hasResidualGating } from "./lib/reveal.js";
+import { parseVersion, updateMessage } from "./lib/updates.js";
 import {
-  createControlMenu, createActivityPanel, createLearnerToolbar, createManagePanel,
-  createFilterPanel,
+  createControlMenu, createSettingsPanel, createPickerToolbar,
+  createActivityPanel, createFilterPanel,
 } from "./lib/ui.js";
 
 const getV = (k) => GM_getValue(k);
 const setV = (k, v) => GM_setValue(k, v);
 const hostname = location.hostname.replace(/^www\./, "");
+const RAW_URL = "https://raw.githubusercontent.com/edrowbo/popup-zapper/main/dist/popup-zapper.user.js";
+const VERSION = (typeof GM_info !== "undefined" && GM_info && GM_info.script)
+  ? GM_info.script.version : "0.0.0";
 
 let library = loadLibrary(getV);
 const persist = () => saveLibrary(setV, library);
 const activityLog = createActivityLog();
+const undo = createUndoStack();
 
 function domainEntry() {
   return (library.domains[hostname] = library.domains[hostname] || { rules: [], restore: {} });
 }
+
+function describeEl(el) {
+  const id = el.id ? `#${el.id}` : "";
+  const cls = el.classList && el.classList.length ? "." + [...el.classList].slice(0, 2).join(".") : "";
+  return `${el.tagName.toLowerCase()}${id}${cls}`;
+}
+
+// ---- status strip ----
+// The badge menu shows the last thing the zapper did, so it's clear something
+// happened. Updated in place (no menu reopen) and also mirrored from the log.
+let lastStatus = "Ready.";
+function setStatus(msg) {
+  lastStatus = msg;
+  const strip = control && control.querySelector("[data-pz-status]");
+  if (strip) strip.textContent = msg;
+}
+activityLog.subscribe(() => {
+  const es = activityLog.entries();
+  if (es.length) {
+    const e = es[es.length - 1];
+    setStatus(`${e.action}: ${e.detail}`);
+  }
+});
 
 // ---- interaction tracking for the reload guard ----
 let lastInteraction = 0;
@@ -38,7 +67,7 @@ const guard = createReloadGuard({
   hadRecentInteraction: () => Date.now() - lastInteraction < 1500,
 });
 
-// ---- reload-trap defense (install before page scripts run) ----
+// ---- reload-trap defense (always on; install before page scripts run) ----
 function installReloadDefense() {
   guard.recordReload(); // count this load
   const origReload = Location.prototype.reload;
@@ -66,32 +95,11 @@ function installReloadDefense() {
   document.addEventListener("DOMContentLoaded", stripMeta, { once: true });
 }
 
-// ---- blocker engine ----
+// ---- blocker engine (always-on safe pass) ----
 function runOnce() {
   // Keep stripping meta-refresh in case it is injected after load.
   try { document.querySelectorAll("meta[http-equiv='refresh' i]").forEach((m) => m.remove()); } catch { /* ignore */ }
   runBlocker({ doc: document, library, hostname, log: (a, d) => activityLog.add(a, d) });
-  runFreeze();
-}
-
-// Keep-content: save the fullest version, restore it if the page got gated.
-// Capped so that if the site keeps re-gating we don't war with it (flashing).
-let freezeRestores = 0;
-const MAX_FREEZE_RESTORES = 3;
-function runFreeze() {
-  const dom = (library.domains || {})[hostname];
-  if (!dom || !dom.freeze) return;
-  try {
-    captureSnapshot(document, window.sessionStorage);
-    if (freezeRestores < MAX_FREEZE_RESTORES && restoreSnapshot(document, window.sessionStorage)) {
-      freezeRestores++;
-      if (freezeRestores >= MAX_FREEZE_RESTORES) {
-        activityLog.add("keep", "stopped restoring — the page keeps re-gating (likely a navigation gate we can't beat)");
-      } else {
-        activityLog.add("keep", `restored saved full content (${freezeRestores}/${MAX_FREEZE_RESTORES})`);
-      }
-    }
-  } catch { /* ignore */ }
 }
 
 function startObserver() {
@@ -113,80 +121,164 @@ function startObserver() {
   });
 }
 
-// ---- learner engine ----
-let learnerActive = false;
-function startLearner() {
-  if (learnerActive) return;
-  learnerActive = true;
-  let guess = findBestGuess(document);
-  let outline = null;
-  const highlight = (el) => {
-    if (outline) outline.style.outline = "";
-    outline = el;
-    if (el) el.style.outline = "3px solid red";
+// ---- Block: pick a popup (ranked candidates + DOM tree cycling) ----
+let blockActive = false;
+function startBlock() {
+  if (blockActive) return;
+  blockActive = true;
+  const picker = createPicker(document);
+  let outlined = null;
+
+  const highlight = () => {
+    if (outlined) outlined.style.outline = "";
+    outlined = picker.current();
+    if (outlined && outlined !== document.body) outlined.style.outline = "3px solid #ff3b30";
   };
-  highlight(guess);
+
+  const onKey = (e) => {
+    if (e.key === "[") { e.preventDefault(); picker.grow(); highlight(); }
+    else if (e.key === "]") { e.preventDefault(); picker.shrink(); highlight(); }
+    else if (e.key === "Escape") { cleanup(); }
+  };
 
   const cleanup = () => {
-    learnerActive = false;
-    if (outline) outline.style.outline = "";
-    toolbar.remove();
-    document.removeEventListener("click", onPick, true);
+    blockActive = false;
+    if (outlined) outlined.style.outline = "";
+    bar.remove();
+    document.removeEventListener("keydown", onKey, true);
   };
 
-  const saveFrom = (el) => {
-    if (!el) return cleanup();
+  const doBlock = (allSites) => {
+    const el = picker.current();
+    if (!el || el === document.body) { setStatus("Nothing selected to block"); return cleanup(); }
     const kws = extractKeywords(el);
-    if (kws.length) {
-      const dom = domainEntry();
-      dom.rules.push(...kws);
-      dom.restore = { ...dom.restore, ...detectDegradation(el) };
-      persist();
-      activityLog.add("learn", `saved ${kws.length} rule(s) from ${el.tagName.toLowerCase()}`);
-      runOnce();
-    } else {
-      activityLog.add("learn", "could not extract a stable keyword from that element");
+    const rule = kws[0] ? { ...kws[0], enabled: true } : null;
+    let ruleRef = null;
+    if (rule) {
+      const list = allSites ? library.global : domainEntry().rules;
+      list.push(rule);
+      ruleRef = { list, rule };
     }
+    if (outlined) { outlined.style.outline = ""; outlined = null; }
+    undo.record(el, ruleRef);
+    try { el.remove(); } catch { /* ignore */ }
+    persist();
+    setStatus(rule
+      ? `✓ Blocked ${describeEl(el)} (${allSites ? "all sites" : "this site"})`
+      : `✓ Removed ${describeEl(el)} (no rule saved)`);
+    runOnce();
     cleanup();
   };
 
-  const onPick = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    saveFrom(e.target);
-  };
-
-  const toolbar = createLearnerToolbar({
-    onConfirm: () => saveFrom(guess),
-    onPick: () => { document.addEventListener("click", onPick, true); },
+  const bar = createPickerToolbar({
+    onPrev: () => { picker.prevCandidate(); highlight(); },
+    onNext: () => { picker.nextCandidate(); highlight(); },
+    onGrow: () => { picker.grow(); highlight(); },
+    onShrink: () => { picker.shrink(); highlight(); },
+    onBlock: doBlock,
     onCancel: cleanup,
   });
-  document.body.appendChild(toolbar);
+  document.body.appendChild(bar);
+  document.addEventListener("keydown", onKey, true);
+  highlight();
 }
 
-// ---- manage panel ----
-let panel = null;
-function toggleManage() {
-  if (panel) { panel.remove(); panel = null; return; }
-  panel = createManagePanel({
-    library, hostname,
-    onDelete: ({ rule, scope }) => {
-      if (scope === "global") {
-        library.global = library.global.filter((r) => r !== rule);
-      } else {
-        const dom = library.domains[hostname];
-        if (dom) dom.rules = dom.rules.filter((r) => r !== rule);
-      }
-      persist(); panel.remove(); panel = null; toggleManage();
-    },
-    onPromote: ({ rule }) => {
-      const dom = library.domains[hostname];
-      if (dom) dom.rules = dom.rules.filter((r) => r !== rule);
-      library.global.push(rule);
-      persist(); panel.remove(); panel = null; toggleManage();
-    },
+// ---- Revert: undo the last Block ----
+function doRevert() {
+  const ok = undo.revertLast();
+  persist();
+  setStatus(ok ? "↩ Reverted last block" : "Nothing to revert");
+  refreshControl();
+}
+
+// ---- Reveal (deeper): aggressive restore, on demand only ----
+function doReveal() {
+  const n = revealDeep(document, (el) => !!(el.closest && el.closest("[data-pz]")));
+  setStatus(n ? `🔎 Revealed content (${n} change(s))` : "Nothing more to reveal");
+  refreshControl();
+}
+
+// ---- Remove paywall: un-gate in place, then open a clean copy in a new tab ----
+let filterPanel = null;
+function offerFreeze() {
+  const hosts = findPaywallHosts(document, window.performance);
+  if (!hosts.length) { setStatus("No known paywall vendor detected to block"); return; }
+  const filters = buildUblockFilters(hosts);
+  let copied = false;
+  try { GM_setClipboard(filters); copied = true; } catch { /* not granted */ }
+  if (filterPanel) filterPanel.remove();
+  filterPanel = createFilterPanel({
+    filters, hosts, copied,
+    onClose: () => { if (filterPanel) { filterPanel.remove(); filterPanel = null; } },
   });
-  document.body.appendChild(panel);
+  document.body.appendChild(filterPanel);
+}
+
+function doRemovePaywall() {
+  // 1. wipe the meter, un-gate in place, snapshot the current (fullest) content.
+  try {
+    const cleared = resetMeter(document, window);
+    if (cleared.length) activityLog.add("meter", `cleared ${cleared.length} meter key(s): ${cleared.join(", ")}`);
+  } catch { /* ignore */ }
+  runOnce();
+  try { captureSnapshot(document, window.sessionStorage); } catch { /* ignore */ }
+
+  // 2. re-download cookie-free and open the clean copy in a NEW tab.
+  if (typeof GM_xmlhttpRequest !== "function") {
+    setStatus("Remove paywall: fetch unavailable in this manager");
+    return;
+  }
+  setStatus("Fetching a clean, cookie-free copy…");
+  GM_xmlhttpRequest({
+    method: "GET",
+    url: location.href,
+    anonymous: true,
+    headers: { "Cache-Control": "no-cache" },
+    onload: (res) => {
+      try {
+        const extracted = extractCleanContent(res.responseText);
+        if (!extracted || extracted.len < 400) {
+          setStatus("Clean copy was also gated (server-side). Offering permanent block…");
+          offerFreeze();
+          return;
+        }
+        const html = buildCleanDocument(res.responseText, location.href);
+        if (!html) { setStatus("Couldn't build the clean copy"); return; }
+        const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+        const w = window.open(url, "_blank");
+        if (!w) window.location.href = url; // popup blocked — replace instead
+        setStatus(`✓ Opened clean copy (${extracted.len} chars) in a new tab`);
+      } catch { setStatus("Error building clean copy"); }
+    },
+    onerror: () => { setStatus("Clean fetch failed; offering permanent block…"); offerFreeze(); },
+  });
+}
+
+// ---- update check ----
+function checkUpdates() {
+  if (typeof GM_xmlhttpRequest !== "function") {
+    alert("Popup Zapper: update check unavailable in this manager.");
+    return;
+  }
+  GM_xmlhttpRequest({
+    method: "GET",
+    url: RAW_URL,
+    onload: (res) => alert("Popup Zapper: " + updateMessage(VERSION, parseVersion(res.responseText))),
+    onerror: () => alert("Popup Zapper: " + updateMessage(VERSION, null)),
+  });
+}
+
+// ---- diagnostics ----
+function copyDiagnostics() {
+  const report = collectDiagnostics(document);
+  try {
+    GM_setClipboard(report);
+    alert("Popup Zapper: diagnostics copied to clipboard. Paste them to share.");
+  } catch {
+    // eslint-disable-next-line no-console
+    console.log("[Popup Zapper diagnostics]\n" + report);
+    alert("Popup Zapper: diagnostics logged to the console (press F12 to view).");
+  }
 }
 
 // ---- activity log panel ----
@@ -212,40 +304,39 @@ function toggleLog() {
   logUnsub = activityLog.subscribe(() => { if (logPanel) renderLogPanel(); });
 }
 
-// ---- diagnostics ----
-function copyDiagnostics() {
-  const report = collectDiagnostics(document);
-  try {
-    GM_setClipboard(report);
-    alert("Popup Zapper: diagnostics copied to clipboard. Paste them to share.");
-  } catch {
-    // eslint-disable-next-line no-console
-    console.log("[Popup Zapper diagnostics]\n" + report);
-    alert("Popup Zapper: diagnostics logged to the console (press F12 to view).");
-  }
-}
-
-// ---- freeze auth (generate uBlock paywall filters) ----
-let filterPanel = null;
-function freezeAuth() {
-  const hosts = findPaywallHosts(document, window.performance);
-  if (!hosts.length) {
-    alert("Popup Zapper: no known paywall/metering scripts detected on this page.");
-    return;
-  }
-  const filters = buildUblockFilters(hosts);
-  let copied = false;
-  try { GM_setClipboard(filters); copied = true; } catch { /* not granted */ }
-  activityLog.add("freeze", `found ${hosts.length} paywall host(s): ${hosts.join(", ")}`);
-  if (filterPanel) filterPanel.remove();
-  filterPanel = createFilterPanel({
-    filters, hosts, copied,
-    onClose: () => { if (filterPanel) { filterPanel.remove(); filterPanel = null; } },
+// ---- settings panel ----
+let settingsPanel = null;
+function closeSettings() { if (settingsPanel) { settingsPanel.remove(); settingsPanel = null; } }
+function openSettings() {
+  settingsPanel = createSettingsPanel({
+    library, hostname, version: VERSION,
+    onToggleRule: ({ rule, enabled }) => { rule.enabled = enabled; persist(); runOnce(); reopenSettings(); },
+    onEditRule: ({ rule }) => {
+      const next = prompt(`Edit rule value (matched by ${rule.type}):`, rule.value);
+      if (next != null && next.trim()) { rule.value = next.trim(); persist(); runOnce(); reopenSettings(); }
+    },
+    onDeleteRule: ({ rule, scope }) => {
+      if (scope === "global") library.global = library.global.filter((r) => r !== rule);
+      else { const dom = library.domains[hostname]; if (dom) dom.rules = dom.rules.filter((r) => r !== rule); }
+      persist(); runOnce(); reopenSettings();
+    },
+    onPromoteRule: ({ rule }) => {
+      const dom = library.domains[hostname];
+      if (dom) dom.rules = dom.rules.filter((r) => r !== rule);
+      library.global.push(rule); persist(); reopenSettings();
+    },
+    onToggleCleanup: (on) => { domainEntry().cleanup = on; persist(); if (on) runOnce(); },
+    onCheckUpdates: checkUpdates,
+    onShowLog: toggleLog,
+    onDiagnostics: copyDiagnostics,
+    onClose: closeSettings,
   });
-  document.body.appendChild(filterPanel);
+  document.body.appendChild(settingsPanel);
 }
+function reopenSettings() { closeSettings(); openSettings(); }
+function toggleSettings() { if (settingsPanel) closeSettings(); else openSettings(); }
 
-// ---- toggles ----
+// ---- site on/off ----
 function toggleSite() {
   const i = library.disabledDomains.indexOf(hostname);
   if (i >= 0) library.disabledDomains.splice(i, 1);
@@ -257,127 +348,38 @@ function toggleSite() {
   if (enabled) runOnce();
 }
 
-// One bundled switch: auto-zap + reset-meter + keep-content together.
-function toggleUnlock() {
-  const dom = domainEntry();
-  dom.unlock = !dom.unlock;
-  dom.autozap = dom.unlock;
-  dom.resetMeter = dom.unlock;
-  dom.freeze = dom.unlock;
-  freezeRestores = 0;
-  persist();
-  activityLog.add("unlock", dom.unlock ? "Unlock mode ON (gates/meter/keep-content)" : "Unlock mode OFF");
-  refreshControl(true);
-  if (dom.unlock) maybeResetMeter();
-  runOnce();
-}
-
-// Last-ditch: re-download the page with NO cookies (sends none of your
-// credentials). If the gate is cookie/counter-based, the server returns the full
-// article, which we render statically in place.
-function fetchCleanCopy() {
-  if (typeof GM_xmlhttpRequest !== "function") {
-    alert("Popup Zapper: GM_xmlhttpRequest isn't available in this manager.");
-    return;
-  }
-  activityLog.add("clean", "fetching an anonymous (cookie-free) copy…");
-  GM_xmlhttpRequest({
-    method: "GET",
-    url: location.href,
-    anonymous: true,
-    headers: { "Cache-Control": "no-cache" },
-    onload: (res) => {
-      try {
-        const extracted = extractCleanContent(res.responseText);
-        if (!extracted || extracted.len < 400) {
-          activityLog.add("clean", "cookie-free copy was also gated (server-side per account/IP)");
-          alert("Popup Zapper: the cookie-free copy was also gated, so this site decides server-side (per account/IP). Can't bypass that.");
-          return;
-        }
-        const cleanHtml = buildCleanDocument(res.responseText, location.href);
-        if (!cleanHtml) { alert("Popup Zapper: couldn't build the clean copy."); return; }
-        const url = URL.createObjectURL(new Blob([cleanHtml], { type: "text/html" }));
-        activityLog.add("clean", `opening cleaned copy (${extracted.len} chars) in a script-free page`);
-        // Open in a new tab if allowed (keeps the original); else replace this one.
-        const win = window.open(url, "_blank");
-        if (!win) window.location.href = url; // href setter isn't blocked by our guard
-      } catch {
-        activityLog.add("clean", "error building clean copy");
-      }
-    },
-    onerror: () => {
-      activityLog.add("clean", "anonymous fetch failed");
-      alert("Popup Zapper: the anonymous fetch failed (blocked by the site or network).");
-    },
-  });
-}
-
-function saveContentNow() {
-  try {
-    const ok = captureSnapshot(document, window.sessionStorage, true);
-    activityLog.add("keep", ok ? "saved content snapshot (manual)" : "nothing substantial to save");
-    alert(ok
-      ? "Popup Zapper: content saved. If the page reloads to a blocked version, use 'Restore content'."
-      : "Popup Zapper: nothing substantial to save on this page yet.");
-  } catch { /* ignore */ }
-}
-
-function restoreContentNow() {
-  try {
-    const ok = restoreSnapshot(document, window.sessionStorage, true);
-    activityLog.add("keep", ok ? "restored content snapshot (manual)" : "no saved content for this page");
-    alert(ok ? "Popup Zapper: restored saved content." : "Popup Zapper: no saved content for this page.");
-  } catch { /* ignore */ }
-}
-
-// Wipe the gate's counter before the site's scripts read it, so this load looks
-// like a fresh visit. Runs at document-start when enabled for the domain.
-function maybeResetMeter() {
-  const dom = (library.domains || {})[hostname];
-  if (!dom || !dom.resetMeter) return;
-  const cleared = resetMeter(document, window);
-  if (cleared.length) activityLog.add("meter", `cleared ${cleared.length} meter key(s): ${cleared.join(", ")}`);
-}
-
 // ---- control menu ----
 let control = null;
+function safeResidual() { try { return hasResidualGating(document); } catch { return false; } }
 function refreshControl(open) {
   if (control) control.remove();
-  const dom = (library.domains || {})[hostname];
   control = createControlMenu({
     enabled: !library.disabledDomains.includes(hostname),
-    unlock: !!(dom && dom.unlock),
     hostname,
     open: !!open,
-    onLearn: startLearner,
-    onManage: toggleManage,
-    onToggleUnlock: toggleUnlock,
-    onRestoreContent: restoreContentNow,
-    onCleanCopy: fetchCleanCopy,
+    status: lastStatus,
+    showReveal: safeResidual(),
     onToggleSite: toggleSite,
-    onShowLog: toggleLog,
-    onDiagnostics: copyDiagnostics,
-    onFreeze: freezeAuth,
+    onBlock: startBlock,
+    onRemovePaywall: doRemovePaywall,
+    onRevert: doRevert,
+    onReveal: doReveal,
+    onSettings: toggleSettings,
   });
   document.body.appendChild(control);
 }
 
 // ---- GM menu commands (extension-menu fallback for the on-page menu) ----
 try {
-  GM_registerMenuCommand("Learn a popup", startLearner);
-  GM_registerMenuCommand("Manage rules", toggleManage);
-  GM_registerMenuCommand("Toggle Unlock mode (this site)", toggleUnlock);
-  GM_registerMenuCommand("Fetch clean copy (cookie-free)", fetchCleanCopy);
-  GM_registerMenuCommand("Save content snapshot now", saveContentNow);
-  GM_registerMenuCommand("Restore content snapshot", restoreContentNow);
-  GM_registerMenuCommand("Show activity log", toggleLog);
-  GM_registerMenuCommand("Freeze auth (block paywall via uBlock)", freezeAuth);
-  GM_registerMenuCommand("Copy page diagnostics (debug)", copyDiagnostics);
+  GM_registerMenuCommand("Block a popup", startBlock);
+  GM_registerMenuCommand("Remove paywall", doRemovePaywall);
+  GM_registerMenuCommand("Revert last block", doRevert);
+  GM_registerMenuCommand("Reveal deeper (this page)", doReveal);
+  GM_registerMenuCommand("Settings", toggleSettings);
   GM_registerMenuCommand("Toggle zapper (this site)", toggleSite);
 } catch { /* not available in all managers */ }
 
 // ---- boot ----
-maybeResetMeter(); // wipe the gate counter at document-start, before page scripts run
 installReloadDefense();
 function boot() {
   runOnce();

@@ -102,35 +102,6 @@
   }
 
   // src/lib/restore.js
-  function styleOf(el) {
-    const cs = (el.ownerDocument.defaultView || window).getComputedStyle(el);
-    return {
-      filter: el.style.filter || cs.filter || "",
-      backdrop: el.style.backdropFilter || cs.backdropFilter || "",
-      opacity: el.style.opacity || cs.opacity || "1",
-      pointerEvents: el.style.pointerEvents || cs.pointerEvents || "auto",
-      userSelect: el.style.userSelect || cs.userSelect || "auto",
-      maxHeight: el.style.maxHeight || cs.maxHeight || "none"
-    };
-  }
-  function detectDegradation(el) {
-    const s = styleOf(el);
-    const blur = /blur\(/i.test(s.filter) || /blur\(/i.test(s.backdrop);
-    const opacity = parseFloat(s.opacity) <= 0.05;
-    const pointerEvents = s.pointerEvents === "none";
-    const userSelect = s.userSelect === "none";
-    const maxHeight = /\d/.test(s.maxHeight) && s.maxHeight !== "none";
-    return { blur, opacity, pointerEvents, userSelect, maxHeight };
-  }
-  function restoreElement(el) {
-    if (!el || el.nodeType !== 1) return;
-    el.style.setProperty("filter", "none", "important");
-    el.style.setProperty("backdrop-filter", "none", "important");
-    el.style.setProperty("opacity", "1", "important");
-    el.style.setProperty("pointer-events", "auto", "important");
-    el.style.setProperty("user-select", "auto", "important");
-    el.style.removeProperty("max-height");
-  }
   function restoreBlur(doc, isWhitelisted2) {
     const win = doc.defaultView || window;
     let count = 0;
@@ -162,6 +133,66 @@
       node.style.setProperty("position", "static", "important");
       node.style.removeProperty("height");
     }
+  }
+
+  // src/lib/paywall-veil.js
+  var VENDOR_SEL = [
+    '[class*="piano-meter" i]',
+    '[class*="tp-modal" i]',
+    '[class*="tp-backdrop" i]',
+    '[class*="poool" i]',
+    '[class*="pelcro" i]',
+    '[class*="zephr" i]',
+    '[class*="paywall" i]',
+    '[class*="regwall" i]'
+  ].join(",");
+  function safeMatches(el, sel) {
+    try {
+      return el.matches(sel);
+    } catch {
+      return false;
+    }
+  }
+  function isVeilOverlay(el, win) {
+    if (!el || el.nodeType !== 1) return false;
+    let cs;
+    try {
+      cs = win.getComputedStyle(el);
+    } catch {
+      return false;
+    }
+    if (cs.position !== "fixed") return false;
+    let rect;
+    try {
+      rect = el.getBoundingClientRect();
+    } catch {
+      rect = null;
+    }
+    const vw = win.innerWidth || 1024, vh = win.innerHeight || 768;
+    if (rect && rect.width * rect.height > 0) {
+      if (rect.width < vw * 0.9 || rect.height < vh * 0.9) return false;
+    }
+    if (safeMatches(el, VENDOR_SEL)) return true;
+    const z = parseInt(cs.zIndex, 10);
+    const highZ = !Number.isNaN(z) && z >= 1e3;
+    const rawStyle = el.getAttribute && el.getAttribute("style") || "";
+    const blur = /blur\(/i.test(cs.backdropFilter || cs.webkitBackdropFilter || "") || /blur\(/i.test(cs.filter || "") || /blur\(/i.test(rawStyle);
+    return highZ && blur;
+  }
+  function removeVeils(doc, skip2) {
+    const win = doc.defaultView || window;
+    const removed = [];
+    for (const el of doc.body.querySelectorAll("div,section,aside")) {
+      if (skip2 && skip2(el)) continue;
+      if (!isVeilOverlay(el, win)) continue;
+      const label = el.className && typeof el.className === "string" ? "." + el.className.trim().split(/\s+/).slice(0, 2).join(".") : el.tagName.toLowerCase();
+      try {
+        el.remove();
+        removed.push(label);
+      } catch {
+      }
+    }
+    return removed;
   }
 
   // src/lib/consent.js
@@ -431,35 +462,12 @@
         changes++;
       }
     }
-    for (const el of doc.body.querySelectorAll("*")) {
-      if (skip(el, whitelist)) continue;
-      let cs;
-      try {
-        cs = win.getComputedStyle(el);
-      } catch {
-        continue;
-      }
-      const mh = parseFloat(cs.maxHeight);
-      const clipped = /hidden|clip/.test(cs.overflow) || /hidden|clip/.test(cs.overflowY);
-      if (!Number.isNaN(mh) && cs.maxHeight !== "none" && mh < 2e3 && clipped) {
-        if ((el.textContent || "").length > 600) {
-          el.style.setProperty("max-height", "none", "important");
-          el.style.setProperty("overflow", "visible", "important");
-          changes++;
-        }
-      }
-    }
     if (changes) log("unlock", `unlocked gated content (${changes} change(s))`);
   }
   function restorePass(doc, whitelist, log) {
     restorePage(doc);
-    for (const el of doc.body.querySelectorAll("*")) {
-      if (skip(el, whitelist)) continue;
-      const style = el.getAttribute && el.getAttribute("style");
-      if (style && /pointer-events\s*:\s*none|opacity\s*:\s*0/i.test(style)) {
-        safe(() => restoreElement(el));
-      }
-    }
+    const veils = safeVal(() => removeVeils(doc, (el) => skip(el, whitelist)), []);
+    if (veils.length) log("paywall", `removed ${veils.length} veil overlay(s): ${veils.join(", ")}`);
     const n = safeVal(() => restoreBlur(doc, (el) => skip(el, whitelist)), 0);
     if (n) log("deblur", `removed blur from ${n} element(s)`);
   }
@@ -807,28 +815,6 @@ Blurred elements: ${blurred.length}`);
       return false;
     }
   }
-  function restoreSnapshot(doc, store, force) {
-    const key = keyFor(doc);
-    let snap;
-    try {
-      snap = JSON.parse(store.getItem(key) || "null");
-    } catch {
-      return false;
-    }
-    if (!snap || !snap.html) return false;
-    let el;
-    try {
-      el = doc.querySelector(snap.sel);
-    } catch {
-      el = null;
-    }
-    if (!el) el = doc.body;
-    if (!el) return false;
-    const curLen = (el.textContent || "").trim().length;
-    if (!force && curLen >= snap.len * 0.6) return false;
-    el.innerHTML = snap.html;
-    return true;
-  }
 
   // src/lib/cleanfetch.js
   function extractCleanContent(htmlString) {
@@ -879,6 +865,166 @@ Blurred elements: ${blurred.length}`);
     return "<!DOCTYPE html>" + doc.documentElement.outerHTML;
   }
 
+  // src/lib/picker.js
+  var MAX_CANDIDATES = 8;
+  function rankCandidates(doc) {
+    const scored = [];
+    for (const el of doc.body.querySelectorAll("*")) {
+      if (el.closest && el.closest("[data-pz]")) continue;
+      const s = scorePopupCandidate(el);
+      if (s > 0) scored.push({ el, s });
+    }
+    scored.sort((a, b) => b.s - a.s);
+    return scored.slice(0, MAX_CANDIDATES).map((x) => x.el);
+  }
+  function createPicker(doc) {
+    const candidates = rankCandidates(doc);
+    let idx = 0;
+    let target = candidates[0] || doc.body;
+    return {
+      current() {
+        return target;
+      },
+      candidateCount() {
+        return candidates.length;
+      },
+      nextCandidate() {
+        if (!candidates.length) return target;
+        idx = (idx + 1) % candidates.length;
+        target = candidates[idx];
+        return target;
+      },
+      prevCandidate() {
+        if (!candidates.length) return target;
+        idx = (idx - 1 + candidates.length) % candidates.length;
+        target = candidates[idx];
+        return target;
+      },
+      grow() {
+        if (target && target.parentElement && target.parentElement !== doc.documentElement && target !== doc.body) {
+          target = target.parentElement;
+        }
+        return target;
+      },
+      shrink() {
+        const child = target && target.firstElementChild;
+        if (child) target = child;
+        return target;
+      }
+    };
+  }
+
+  // src/lib/undo.js
+  function createUndoStack() {
+    const items = [];
+    return {
+      record(node, ruleRef) {
+        if (!node || !node.parentNode) return;
+        items.push({ node, parent: node.parentNode, nextSibling: node.nextSibling, ruleRef: ruleRef || null });
+      },
+      revertLast() {
+        const it = items.pop();
+        if (!it) return false;
+        try {
+          if (it.nextSibling && it.nextSibling.parentNode === it.parent) {
+            it.parent.insertBefore(it.node, it.nextSibling);
+          } else {
+            it.parent.appendChild(it.node);
+          }
+        } catch {
+          return false;
+        }
+        if (it.ruleRef && it.ruleRef.list) {
+          const i = it.ruleRef.list.indexOf(it.ruleRef.rule);
+          if (i >= 0) it.ruleRef.list.splice(i, 1);
+        }
+        return true;
+      },
+      size() {
+        return items.length;
+      }
+    };
+  }
+
+  // src/lib/reveal.js
+  var MIN_TEXT2 = 600;
+  var MAX_CLAMP = 2e3;
+  function clamped(cs) {
+    const mh = parseFloat(cs.maxHeight);
+    const hidden = /hidden|clip/.test(cs.overflow) || /hidden|clip/.test(cs.overflowY);
+    return !Number.isNaN(mh) && cs.maxHeight !== "none" && mh < MAX_CLAMP && hidden;
+  }
+  function hasResidualGating(doc) {
+    const win = doc.defaultView || window;
+    for (const el of doc.body.querySelectorAll("*")) {
+      if (el.closest && el.closest("[data-pz]")) continue;
+      let cs;
+      try {
+        cs = win.getComputedStyle(el);
+      } catch {
+        continue;
+      }
+      const long = (el.textContent || "").length > MIN_TEXT2;
+      if (long && clamped(cs)) return true;
+      if (long && parseFloat(cs.opacity || "1") <= 0.05) return true;
+    }
+    return false;
+  }
+  function revealDeep(doc, skip2) {
+    const win = doc.defaultView || window;
+    let changes = 0;
+    for (const el of doc.body.querySelectorAll("*")) {
+      if (el.closest && el.closest("[data-pz]")) continue;
+      if (skip2 && skip2(el)) continue;
+      let cs;
+      try {
+        cs = win.getComputedStyle(el);
+      } catch {
+        continue;
+      }
+      const long = (el.textContent || "").length > MIN_TEXT2;
+      if (long && clamped(cs)) {
+        el.style.setProperty("max-height", "none", "important");
+        el.style.setProperty("overflow", "visible", "important");
+        changes++;
+      }
+      const inline = el.getAttribute && el.getAttribute("style") || "";
+      if (/pointer-events\s*:\s*none|opacity\s*:\s*0(?!\.)/i.test(inline)) {
+        el.style.setProperty("pointer-events", "auto", "important");
+        el.style.setProperty("opacity", "1", "important");
+        changes++;
+      }
+      if (/blur\(/i.test(cs.filter || "") || /blur\(/i.test(cs.backdropFilter || "")) {
+        el.style.setProperty("filter", "none", "important");
+        el.style.setProperty("backdrop-filter", "none", "important");
+        changes++;
+      }
+    }
+    return changes;
+  }
+
+  // src/lib/updates.js
+  function parseVersion(headerText) {
+    const m = /@version\s+([0-9][0-9A-Za-z.\-]*)/.exec(headerText || "");
+    return m ? m[1] : null;
+  }
+  function compareVersions(a, b) {
+    const pa = String(a).split(".").map((n) => parseInt(n, 10) || 0);
+    const pb = String(b).split(".").map((n) => parseInt(n, 10) || 0);
+    const len = Math.max(pa.length, pb.length);
+    for (let i = 0; i < len; i++) {
+      const d = (pa[i] || 0) - (pb[i] || 0);
+      if (d) return d > 0 ? 1 : -1;
+    }
+    return 0;
+  }
+  function updateMessage(current, remote) {
+    if (!remote) return "Couldn't check for updates (network blocked).";
+    const c = compareVersions(remote, current);
+    if (c > 0) return `v${remote} available \u2014 your userscript manager will install it.`;
+    return "Up to date \u2713";
+  }
+
   // src/lib/ui.js
   var PREFIX2 = "pz-";
   function tag(name, props = {}, children = []) {
@@ -893,18 +1039,16 @@ Blurred elements: ${blurred.length}`);
   }
   function createControlMenu({
     enabled,
-    unlock,
     hostname: hostname2,
     open,
-    onLearn,
-    onManage,
-    onToggleUnlock,
-    onRestoreContent,
-    onCleanCopy,
+    status,
+    showReveal,
     onToggleSite,
-    onShowLog,
-    onDiagnostics,
-    onFreeze
+    onBlock,
+    onRemovePaywall,
+    onRevert,
+    onReveal,
+    onSettings
   }) {
     const wrap = own(tag("div", { className: PREFIX2 + "control" }), "control");
     wrap.style.cssText = "position:fixed;bottom:12px;right:12px;z-index:2147483647;font:12px sans-serif;";
@@ -918,14 +1062,19 @@ Blurred elements: ${blurred.length}`);
     menu.style.cssText = `display:${open ? "block" : "none"};position:absolute;bottom:34px;right:0;background:#fff;color:#111;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,.3);overflow:hidden;min-width:240px;`;
     const header = tag("div");
     header.style.cssText = "padding:8px 12px;background:#f6f6f6;border-bottom:1px solid #e0e0e0;";
-    header.appendChild(tag("div", {
+    const hRow = tag("div");
+    hRow.style.cssText = "display:flex;justify-content:space-between;align-items:center;gap:8px;";
+    hRow.appendChild(tag("span", {
       textContent: hostname2 || "this site",
       style: "font-weight:bold;color:#333;word-break:break-all;"
     }));
-    header.appendChild(tag("div", {
-      textContent: enabled ? "\u25CF Running on this site" : "\u25CB Turned off on this site",
-      style: `color:${enabled ? "#2e7d32" : "#b00020"};margin-top:2px;`
-    }));
+    const toggle = tag("button", { textContent: enabled ? "On \u25CF" : "Off \u25CB" });
+    toggle.setAttribute("data-act", "site");
+    toggle.title = enabled ? "Turn off for this site" : "Turn on for this site";
+    toggle.style.cssText = "border:0;border-radius:12px;padding:3px 10px;cursor:pointer;font-weight:bold;color:#fff;background:" + (enabled ? "#2e7d32" : "#b00020");
+    toggle.addEventListener("click", onToggleSite);
+    hRow.appendChild(toggle);
+    header.appendChild(hRow);
     menu.appendChild(header);
     const item = (act, label, handler, accent) => {
       const b = tag("button", { textContent: label });
@@ -937,31 +1086,22 @@ Blurred elements: ${blurred.length}`);
       b.addEventListener("mouseleave", () => {
         b.style.background = "#fff";
       });
-      b.addEventListener("click", handler);
+      if (handler) b.addEventListener("click", handler);
       menu.appendChild(b);
       return b;
     };
-    item(
-      "site",
-      enabled ? "\u{1F534} Turn OFF for this site" : "\u{1F7E2} Turn ON for this site",
-      onToggleSite,
-      enabled ? "#b00020" : "#2e7d32"
-    );
-    if (onToggleUnlock) {
-      item(
-        "unlock",
-        unlock ? "\u{1F513} Unlock mode: ON  \u2014  tap to turn off" : "\u{1F513} Unlock mode: OFF  \u2014  remove gates, reset meter, keep content",
-        onToggleUnlock,
-        unlock ? "#2e7d32" : "#111"
-      );
+    item("block", "\u25CE Block a popup", onBlock);
+    item("paywall", "\u21EA Remove paywall", onRemovePaywall);
+    item("revert", "\u21A9 Revert last block", onRevert);
+    const strip = tag("div");
+    strip.setAttribute("data-pz-status", "");
+    strip.style.cssText = "padding:7px 12px;border-top:1px solid #eee;border-bottom:1px solid #eee;color:#555;font:11px sans-serif;min-height:16px;background:#fafafa;";
+    strip.textContent = status || "Ready.";
+    menu.appendChild(strip);
+    if (showReveal) {
+      item("reveal", "\u{1F50E} Still blocked? Reveal deeper", onReveal, "#8a5a00");
     }
-    if (onRestoreContent) item("restore", "\u21A9\uFE0F Restore saved content", onRestoreContent);
-    if (onCleanCopy) item("clean", "\u{1F310} Fetch clean copy (cookie-free)", onCleanCopy);
-    if (onFreeze) item("freeze", "\u{1F9CA} Freeze auth (block paywall)", onFreeze);
-    item("learn", "\u{1F3AF} Learn a popup", onLearn);
-    item("manage", "\u{1F4CB} Manage rules", onManage);
-    item("log", "\u{1F4DC} Activity log", onShowLog);
-    if (onDiagnostics) item("diag", "\u{1F527} Copy diagnostics (debug)", onDiagnostics);
+    item("settings", "\u2699 Settings", onSettings);
     badge.addEventListener("click", () => {
       menu.style.display = menu.style.display === "none" ? "block" : "none";
     });
@@ -969,19 +1109,142 @@ Blurred elements: ${blurred.length}`);
     wrap.appendChild(menu);
     return wrap;
   }
-  function createFilterPanel({ filters, hosts, copied, onClose }) {
-    const panel2 = own(tag("div", { className: PREFIX2 + "filters" }), "filters");
-    panel2.style.cssText = "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:2147483647;background:#fff;color:#111;padding:16px;border-radius:10px;width:440px;max-width:92vw;font:13px sans-serif;box-shadow:0 4px 24px rgba(0,0,0,.5);";
+  function createSettingsPanel({
+    library: library2,
+    hostname: hostname2,
+    version,
+    onToggleRule,
+    onEditRule,
+    onDeleteRule,
+    onPromoteRule,
+    onToggleCleanup,
+    onCheckUpdates,
+    onShowLog,
+    onDiagnostics,
+    onClose
+  }) {
+    const panel = own(tag("div", { className: PREFIX2 + "settings" }), "settings");
+    panel.style.cssText = "position:fixed;top:40px;right:12px;z-index:2147483647;background:#fff;color:#111;padding:12px;border-radius:8px;font:13px sans-serif;max-height:74vh;overflow:auto;box-shadow:0 2px 12px rgba(0,0,0,.3);min-width:300px;max-width:92vw;";
     const head = tag("div");
     head.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;";
-    head.appendChild(tag("strong", { textContent: "\u{1F9CA} Freeze auth \u2014 block this paywall" }));
+    head.appendChild(tag("strong", { textContent: "\u2699 Settings" }));
     const cls = tag("button", { textContent: "\u2715" });
     cls.setAttribute("data-act", "close");
     cls.style.cssText = "border:0;background:none;font-size:16px;cursor:pointer;";
     cls.addEventListener("click", onClose);
     head.appendChild(cls);
-    panel2.appendChild(head);
-    panel2.appendChild(tag("div", {
+    panel.appendChild(head);
+    panel.appendChild(tag("div", {
+      textContent: "What's blocked on this site",
+      style: "font-weight:bold;color:#333;margin:6px 0 4px;"
+    }));
+    const addRule = (rule, scope) => {
+      const row = tag("div");
+      row.style.cssText = "display:flex;gap:6px;align-items:center;margin:4px 0;";
+      const cb = tag("input", { type: "checkbox", checked: rule.enabled !== false });
+      cb.setAttribute("data-act", "toggle-rule");
+      cb.addEventListener("change", () => onToggleRule({ rule, scope, enabled: cb.checked }));
+      row.appendChild(cb);
+      row.appendChild(tag("span", {
+        textContent: `[${scope}] ${rule.type}: ${rule.value}`,
+        style: "flex:1;word-break:break-all;color:" + (rule.enabled === false ? "#999" : "#111")
+      }));
+      const edit = tag("button", { textContent: "Edit" });
+      edit.setAttribute("data-act", "edit-rule");
+      edit.addEventListener("click", () => onEditRule({ rule, scope }));
+      row.appendChild(edit);
+      const del = tag("button", { textContent: "Delete" });
+      del.setAttribute("data-act", "delete-rule");
+      del.addEventListener("click", () => onDeleteRule({ rule, scope }));
+      row.appendChild(del);
+      if (scope === "site") {
+        const prom = tag("button", { textContent: "Make global" });
+        prom.setAttribute("data-act", "promote-rule");
+        prom.addEventListener("click", () => onPromoteRule({ rule }));
+        row.appendChild(prom);
+      }
+      panel.appendChild(row);
+    };
+    const globals = library2.global || [];
+    const dom = (library2.domains || {})[hostname2] || {};
+    const siteRules = dom.rules || [];
+    if (!globals.length && !siteRules.length) {
+      panel.appendChild(tag("div", {
+        textContent: "No rules yet. Use \u201CBlock a popup\u201D to add one.",
+        style: "color:#888;margin:2px 0 6px;"
+      }));
+    }
+    for (const r of globals) addRule(r, "global");
+    for (const r of siteRules) addRule(r, "site");
+    const cleanupRow = tag("label");
+    cleanupRow.style.cssText = "display:flex;gap:6px;align-items:center;margin:10px 0 4px;border-top:1px solid #eee;padding-top:8px;";
+    const cleanupCb = tag("input", { type: "checkbox", checked: dom.cleanup === true });
+    cleanupCb.setAttribute("data-act", "toggle-cleanup");
+    cleanupCb.addEventListener("change", () => onToggleCleanup(cleanupCb.checked));
+    cleanupRow.appendChild(cleanupCb);
+    cleanupRow.appendChild(tag("span", { textContent: "Delete tracking cookies/storage on this site (can log you out)" }));
+    panel.appendChild(cleanupRow);
+    const verRow = tag("div");
+    verRow.style.cssText = "display:flex;gap:8px;align-items:center;margin:10px 0 4px;border-top:1px solid #eee;padding-top:8px;";
+    verRow.appendChild(tag("span", { textContent: `Popup Zapper v${version}`, style: "flex:1;color:#333;" }));
+    const upd = tag("button", { textContent: "Check for updates" });
+    upd.setAttribute("data-act", "check-updates");
+    upd.addEventListener("click", onCheckUpdates);
+    verRow.appendChild(upd);
+    panel.appendChild(verRow);
+    const dbg = tag("div");
+    dbg.style.cssText = "display:flex;gap:8px;margin-top:8px;";
+    const logBtn = tag("button", { textContent: "\u{1F4DC} Activity log" });
+    logBtn.setAttribute("data-act", "log");
+    logBtn.addEventListener("click", onShowLog);
+    dbg.appendChild(logBtn);
+    if (onDiagnostics) {
+      const diagBtn = tag("button", { textContent: "\u{1F527} Copy diagnostics" });
+      diagBtn.setAttribute("data-act", "diag");
+      diagBtn.addEventListener("click", onDiagnostics);
+      dbg.appendChild(diagBtn);
+    }
+    panel.appendChild(dbg);
+    return panel;
+  }
+  function createPickerToolbar({ onPrev, onNext, onGrow, onShrink, onBlock, onCancel }) {
+    const mk = (act, label, handler, title) => {
+      const b = tag("button", { textContent: label, title: title || label });
+      b.setAttribute("data-act", act);
+      b.style.cssText = "margin:0 3px;padding:4px 9px;font:13px sans-serif;cursor:pointer;border-radius:4px;border:0;";
+      b.addEventListener("click", handler);
+      return b;
+    };
+    const bar = own(tag("div", { className: PREFIX2 + "picker" }), "picker");
+    bar.style.cssText = "position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2147483647;background:#222;color:#fff;padding:8px 12px;border-radius:8px;font:13px sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.4);display:flex;align-items:center;";
+    bar.appendChild(tag("span", { textContent: "Pick the popup: ", style: "margin-right:6px" }));
+    bar.appendChild(mk("prev", "\u25C0", onPrev, "Previous candidate"));
+    bar.appendChild(mk("next", "\u25B6", onNext, "Next candidate"));
+    bar.appendChild(mk("grow", "\u25B2", onGrow, "Select parent ( [ )"));
+    bar.appendChild(mk("shrink", "\u25BC", onShrink, "Select child ( ] )"));
+    const applyAll = tag("label", { style: "margin:0 8px;font:12px sans-serif;" });
+    const allCb = tag("input", { type: "checkbox" });
+    allCb.setAttribute("data-act", "all-sites");
+    applyAll.appendChild(allCb);
+    applyAll.appendChild(tag("span", { textContent: " all sites" }));
+    bar.appendChild(applyAll);
+    bar.appendChild(mk("block", "\u2713 Block", () => onBlock(allCb.checked), "Block this element"));
+    bar.appendChild(mk("cancel", "Cancel", onCancel));
+    return bar;
+  }
+  function createFilterPanel({ filters, hosts, copied, onClose }) {
+    const panel = own(tag("div", { className: PREFIX2 + "filters" }), "filters");
+    panel.style.cssText = "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:2147483647;background:#fff;color:#111;padding:16px;border-radius:10px;width:440px;max-width:92vw;font:13px sans-serif;box-shadow:0 4px 24px rgba(0,0,0,.5);";
+    const head = tag("div");
+    head.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;";
+    head.appendChild(tag("strong", { textContent: "\u{1F9CA} Block this paywall permanently" }));
+    const cls = tag("button", { textContent: "\u2715" });
+    cls.setAttribute("data-act", "close");
+    cls.style.cssText = "border:0;background:none;font-size:16px;cursor:pointer;";
+    cls.addEventListener("click", onClose);
+    head.appendChild(cls);
+    panel.appendChild(head);
+    panel.appendChild(tag("div", {
       textContent: `Found ${hosts.length} paywall/metering host(s) on this page${copied ? " \u2014 copied to your clipboard." : "."}`,
       style: "margin-bottom:8px;color:#333;"
     }));
@@ -990,7 +1253,7 @@ Blurred elements: ${blurred.length}`);
     area.readOnly = true;
     area.style.cssText = "width:100%;height:96px;font:12px monospace;box-sizing:border-box;border:1px solid #ccc;border-radius:6px;padding:8px;resize:vertical;";
     area.addEventListener("focus", () => area.select());
-    panel2.appendChild(area);
+    panel.appendChild(area);
     const steps = tag("ol");
     steps.style.cssText = "margin:10px 0 0 0;padding-left:20px;color:#333;line-height:1.6;";
     for (const s of [
@@ -999,12 +1262,12 @@ Blurred elements: ${blurred.length}`);
       "Paste the lines above (already copied) at the end.",
       'Click "Apply changes", then reload this page.'
     ]) steps.appendChild(tag("li", { textContent: s }));
-    panel2.appendChild(steps);
-    return panel2;
+    panel.appendChild(steps);
+    return panel;
   }
   function createActivityPanel({ entries, onClear, onClose }) {
-    const panel2 = own(tag("div", { className: PREFIX2 + "log" }), "log");
-    panel2.style.cssText = "position:fixed;bottom:54px;right:12px;z-index:2147483647;background:#111;color:#eee;padding:10px;border-radius:8px;font:11px/1.5 monospace;max-height:50vh;width:340px;overflow:auto;box-shadow:0 2px 12px rgba(0,0,0,.5);";
+    const panel = own(tag("div", { className: PREFIX2 + "log" }), "log");
+    panel.style.cssText = "position:fixed;bottom:54px;right:12px;z-index:2147483647;background:#111;color:#eee;padding:10px;border-radius:8px;font:11px/1.5 monospace;max-height:50vh;width:340px;overflow:auto;box-shadow:0 2px 12px rgba(0,0,0,.5);";
     const head = tag("div");
     head.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;";
     head.appendChild(tag("strong", { textContent: "Activity", style: "color:#fff" }));
@@ -1020,81 +1283,53 @@ Blurred elements: ${blurred.length}`);
     btns.appendChild(clr);
     btns.appendChild(cls);
     head.appendChild(btns);
-    panel2.appendChild(head);
+    panel.appendChild(head);
     if (!entries || entries.length === 0) {
-      panel2.appendChild(tag("div", {
-        textContent: "Nothing yet on this page. If a popup is here, use Learn a popup or turn on Auto-zap.",
+      panel.appendChild(tag("div", {
+        textContent: "Nothing yet on this page. If a popup is here, use Block a popup.",
         style: "color:#aaa"
       }));
     } else {
       for (const e of entries) {
         const time = new Date(e.t).toLocaleTimeString();
         const times = e.count > 1 ? ` (x${e.count})` : "";
-        panel2.appendChild(tag("div", { textContent: `${time}  [${e.action}] ${e.detail}${times}` }));
+        panel.appendChild(tag("div", { textContent: `${time}  [${e.action}] ${e.detail}${times}` }));
       }
     }
-    return panel2;
-  }
-  function createLearnerToolbar({ onConfirm, onPick, onCancel }) {
-    const mk = (act, label) => {
-      const b = tag("button", { textContent: label });
-      b.setAttribute("data-act", act);
-      b.style.cssText = "margin:0 4px;padding:4px 8px;font:12px sans-serif;cursor:pointer;";
-      return b;
-    };
-    const bar = own(tag("div", { className: PREFIX2 + "toolbar" }, [
-      tag("span", { textContent: "Popup? " }),
-      mk("confirm", "\u2713 Yes"),
-      mk("pick", "Click the right one"),
-      mk("cancel", "Cancel")
-    ]), "toolbar");
-    bar.style.cssText = "position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2147483647;background:#222;color:#fff;padding:8px 12px;border-radius:8px;font:13px sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.4);";
-    bar.querySelector("[data-act='confirm']").addEventListener("click", onConfirm);
-    bar.querySelector("[data-act='pick']").addEventListener("click", onPick);
-    bar.querySelector("[data-act='cancel']").addEventListener("click", onCancel);
-    return bar;
-  }
-  function createManagePanel({ library: library2, hostname: hostname2, onDelete, onPromote }) {
-    const panel2 = own(tag("div", { className: PREFIX2 + "panel" }), "panel");
-    panel2.style.cssText = "position:fixed;top:40px;right:12px;z-index:2147483647;background:#fff;color:#111;padding:12px;border-radius:8px;font:13px sans-serif;max-height:70vh;overflow:auto;box-shadow:0 2px 12px rgba(0,0,0,.3);min-width:280px;";
-    const rows = [];
-    const addRow = (rule, scope) => {
-      const row = tag("div");
-      row.style.cssText = "display:flex;gap:6px;align-items:center;margin:4px 0;";
-      row.appendChild(tag("span", {
-        textContent: `[${scope}] ${rule.type}: ${rule.value}`,
-        style: "flex:1"
-      }));
-      const del = tag("button", { textContent: "Delete" });
-      del.setAttribute("data-act", "delete");
-      del.addEventListener("click", () => onDelete({ rule, scope }));
-      row.appendChild(del);
-      if (scope === "site") {
-        const prom = tag("button", { textContent: "Make global" });
-        prom.setAttribute("data-act", "promote");
-        prom.addEventListener("click", () => onPromote({ rule }));
-        row.appendChild(prom);
-      }
-      rows.push(row);
-    };
-    panel2.appendChild(tag("strong", { textContent: "Popup Zapper rules" }));
-    for (const r of library2.global || []) addRow(r, "global");
-    const dom = (library2.domains || {})[hostname2];
-    for (const r of dom && dom.rules || []) addRow(r, "site");
-    for (const row of rows) panel2.appendChild(row);
-    return panel2;
+    return panel;
   }
 
   // src/main.js
   var getV = (k) => GM_getValue(k);
   var setV = (k, v) => GM_setValue(k, v);
   var hostname = location.hostname.replace(/^www\./, "");
+  var RAW_URL = "https://raw.githubusercontent.com/edrowbo/popup-zapper/main/dist/popup-zapper.user.js";
+  var VERSION = typeof GM_info !== "undefined" && GM_info && GM_info.script ? GM_info.script.version : "0.0.0";
   var library = loadLibrary(getV);
   var persist = () => saveLibrary(setV, library);
   var activityLog = createActivityLog();
+  var undo = createUndoStack();
   function domainEntry() {
     return library.domains[hostname] = library.domains[hostname] || { rules: [], restore: {} };
   }
+  function describeEl(el) {
+    const id = el.id ? `#${el.id}` : "";
+    const cls = el.classList && el.classList.length ? "." + [...el.classList].slice(0, 2).join(".") : "";
+    return `${el.tagName.toLowerCase()}${id}${cls}`;
+  }
+  var lastStatus = "Ready.";
+  function setStatus(msg) {
+    lastStatus = msg;
+    const strip = control && control.querySelector("[data-pz-status]");
+    if (strip) strip.textContent = msg;
+  }
+  activityLog.subscribe(() => {
+    const es = activityLog.entries();
+    if (es.length) {
+      const e = es[es.length - 1];
+      setStatus(`${e.action}: ${e.detail}`);
+    }
+  });
   var lastInteraction = 0;
   for (const ev of ["click", "keydown", "submit", "pointerdown"]) {
     window.addEventListener(ev, () => {
@@ -1137,25 +1372,6 @@ Blurred elements: ${blurred.length}`);
     } catch {
     }
     runBlocker({ doc: document, library, hostname, log: (a, d) => activityLog.add(a, d) });
-    runFreeze();
-  }
-  var freezeRestores = 0;
-  var MAX_FREEZE_RESTORES = 3;
-  function runFreeze() {
-    const dom = (library.domains || {})[hostname];
-    if (!dom || !dom.freeze) return;
-    try {
-      captureSnapshot(document, window.sessionStorage);
-      if (freezeRestores < MAX_FREEZE_RESTORES && restoreSnapshot(document, window.sessionStorage)) {
-        freezeRestores++;
-        if (freezeRestores >= MAX_FREEZE_RESTORES) {
-          activityLog.add("keep", "stopped restoring \u2014 the page keeps re-gating (likely a navigation gate we can't beat)");
-        } else {
-          activityLog.add("keep", `restored saved full content (${freezeRestores}/${MAX_FREEZE_RESTORES})`);
-        }
-      }
-    } catch {
-    }
   }
   function startObserver() {
     let pending = false;
@@ -1167,88 +1383,203 @@ Blurred elements: ${blurred.length}`);
         runOnce();
       });
     });
-    obs.observe(document.documentElement, { childList: true, subtree: true });
+    obs.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["style", "class"]
+    });
   }
-  var learnerActive = false;
-  function startLearner() {
-    if (learnerActive) return;
-    learnerActive = true;
-    let guess = findBestGuess(document);
-    let outline = null;
-    const highlight = (el) => {
-      if (outline) outline.style.outline = "";
-      outline = el;
-      if (el) el.style.outline = "3px solid red";
+  var blockActive = false;
+  function startBlock() {
+    if (blockActive) return;
+    blockActive = true;
+    const picker = createPicker(document);
+    let outlined = null;
+    const highlight = () => {
+      if (outlined) outlined.style.outline = "";
+      outlined = picker.current();
+      if (outlined && outlined !== document.body) outlined.style.outline = "3px solid #ff3b30";
     };
-    highlight(guess);
-    const cleanup = () => {
-      learnerActive = false;
-      if (outline) outline.style.outline = "";
-      toolbar.remove();
-      document.removeEventListener("click", onPick, true);
-    };
-    const saveFrom = (el) => {
-      if (!el) return cleanup();
-      const kws = extractKeywords(el);
-      if (kws.length) {
-        const dom = domainEntry();
-        dom.rules.push(...kws);
-        dom.restore = { ...dom.restore, ...detectDegradation(el) };
-        persist();
-        activityLog.add("learn", `saved ${kws.length} rule(s) from ${el.tagName.toLowerCase()}`);
-        runOnce();
-      } else {
-        activityLog.add("learn", "could not extract a stable keyword from that element");
+    const onKey = (e) => {
+      if (e.key === "[") {
+        e.preventDefault();
+        picker.grow();
+        highlight();
+      } else if (e.key === "]") {
+        e.preventDefault();
+        picker.shrink();
+        highlight();
+      } else if (e.key === "Escape") {
+        cleanup();
       }
+    };
+    const cleanup = () => {
+      blockActive = false;
+      if (outlined) outlined.style.outline = "";
+      bar.remove();
+      document.removeEventListener("keydown", onKey, true);
+    };
+    const doBlock = (allSites) => {
+      const el = picker.current();
+      if (!el || el === document.body) {
+        setStatus("Nothing selected to block");
+        return cleanup();
+      }
+      const kws = extractKeywords(el);
+      const rule = kws[0] ? { ...kws[0], enabled: true } : null;
+      let ruleRef = null;
+      if (rule) {
+        const list = allSites ? library.global : domainEntry().rules;
+        list.push(rule);
+        ruleRef = { list, rule };
+      }
+      if (outlined) {
+        outlined.style.outline = "";
+        outlined = null;
+      }
+      undo.record(el, ruleRef);
+      try {
+        el.remove();
+      } catch {
+      }
+      persist();
+      setStatus(rule ? `\u2713 Blocked ${describeEl(el)} (${allSites ? "all sites" : "this site"})` : `\u2713 Removed ${describeEl(el)} (no rule saved)`);
+      runOnce();
       cleanup();
     };
-    const onPick = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      saveFrom(e.target);
-    };
-    const toolbar = createLearnerToolbar({
-      onConfirm: () => saveFrom(guess),
-      onPick: () => {
-        document.addEventListener("click", onPick, true);
+    const bar = createPickerToolbar({
+      onPrev: () => {
+        picker.prevCandidate();
+        highlight();
       },
+      onNext: () => {
+        picker.nextCandidate();
+        highlight();
+      },
+      onGrow: () => {
+        picker.grow();
+        highlight();
+      },
+      onShrink: () => {
+        picker.shrink();
+        highlight();
+      },
+      onBlock: doBlock,
       onCancel: cleanup
     });
-    document.body.appendChild(toolbar);
+    document.body.appendChild(bar);
+    document.addEventListener("keydown", onKey, true);
+    highlight();
   }
-  var panel = null;
-  function toggleManage() {
-    if (panel) {
-      panel.remove();
-      panel = null;
+  function doRevert() {
+    const ok = undo.revertLast();
+    persist();
+    setStatus(ok ? "\u21A9 Reverted last block" : "Nothing to revert");
+    refreshControl();
+  }
+  function doReveal() {
+    const n = revealDeep(document, (el) => !!(el.closest && el.closest("[data-pz]")));
+    setStatus(n ? `\u{1F50E} Revealed content (${n} change(s))` : "Nothing more to reveal");
+    refreshControl();
+  }
+  var filterPanel = null;
+  function offerFreeze() {
+    const hosts = findPaywallHosts(document, window.performance);
+    if (!hosts.length) {
+      setStatus("No known paywall vendor detected to block");
       return;
     }
-    panel = createManagePanel({
-      library,
-      hostname,
-      onDelete: ({ rule, scope }) => {
-        if (scope === "global") {
-          library.global = library.global.filter((r) => r !== rule);
-        } else {
-          const dom = library.domains[hostname];
-          if (dom) dom.rules = dom.rules.filter((r) => r !== rule);
+    const filters = buildUblockFilters(hosts);
+    let copied = false;
+    try {
+      GM_setClipboard(filters);
+      copied = true;
+    } catch {
+    }
+    if (filterPanel) filterPanel.remove();
+    filterPanel = createFilterPanel({
+      filters,
+      hosts,
+      copied,
+      onClose: () => {
+        if (filterPanel) {
+          filterPanel.remove();
+          filterPanel = null;
         }
-        persist();
-        panel.remove();
-        panel = null;
-        toggleManage();
-      },
-      onPromote: ({ rule }) => {
-        const dom = library.domains[hostname];
-        if (dom) dom.rules = dom.rules.filter((r) => r !== rule);
-        library.global.push(rule);
-        persist();
-        panel.remove();
-        panel = null;
-        toggleManage();
       }
     });
-    document.body.appendChild(panel);
+    document.body.appendChild(filterPanel);
+  }
+  function doRemovePaywall() {
+    try {
+      const cleared = resetMeter(document, window);
+      if (cleared.length) activityLog.add("meter", `cleared ${cleared.length} meter key(s): ${cleared.join(", ")}`);
+    } catch {
+    }
+    runOnce();
+    try {
+      captureSnapshot(document, window.sessionStorage);
+    } catch {
+    }
+    if (typeof GM_xmlhttpRequest !== "function") {
+      setStatus("Remove paywall: fetch unavailable in this manager");
+      return;
+    }
+    setStatus("Fetching a clean, cookie-free copy\u2026");
+    GM_xmlhttpRequest({
+      method: "GET",
+      url: location.href,
+      anonymous: true,
+      headers: { "Cache-Control": "no-cache" },
+      onload: (res) => {
+        try {
+          const extracted = extractCleanContent(res.responseText);
+          if (!extracted || extracted.len < 400) {
+            setStatus("Clean copy was also gated (server-side). Offering permanent block\u2026");
+            offerFreeze();
+            return;
+          }
+          const html = buildCleanDocument(res.responseText, location.href);
+          if (!html) {
+            setStatus("Couldn't build the clean copy");
+            return;
+          }
+          const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+          const w = window.open(url, "_blank");
+          if (!w) window.location.href = url;
+          setStatus(`\u2713 Opened clean copy (${extracted.len} chars) in a new tab`);
+        } catch {
+          setStatus("Error building clean copy");
+        }
+      },
+      onerror: () => {
+        setStatus("Clean fetch failed; offering permanent block\u2026");
+        offerFreeze();
+      }
+    });
+  }
+  function checkUpdates() {
+    if (typeof GM_xmlhttpRequest !== "function") {
+      alert("Popup Zapper: update check unavailable in this manager.");
+      return;
+    }
+    GM_xmlhttpRequest({
+      method: "GET",
+      url: RAW_URL,
+      onload: (res) => alert("Popup Zapper: " + updateMessage(VERSION, parseVersion(res.responseText))),
+      onerror: () => alert("Popup Zapper: " + updateMessage(VERSION, null))
+    });
+  }
+  function copyDiagnostics() {
+    const report = collectDiagnostics(document);
+    try {
+      GM_setClipboard(report);
+      alert("Popup Zapper: diagnostics copied to clipboard. Paste them to share.");
+    } catch {
+      console.log("[Popup Zapper diagnostics]\n" + report);
+      alert("Popup Zapper: diagnostics logged to the console (press F12 to view).");
+    }
   }
   var logPanel = null;
   var logUnsub = null;
@@ -1284,44 +1615,69 @@ Blurred elements: ${blurred.length}`);
       if (logPanel) renderLogPanel();
     });
   }
-  function copyDiagnostics() {
-    const report = collectDiagnostics(document);
-    try {
-      GM_setClipboard(report);
-      alert("Popup Zapper: diagnostics copied to clipboard. Paste them to share.");
-    } catch {
-      console.log("[Popup Zapper diagnostics]\n" + report);
-      alert("Popup Zapper: diagnostics logged to the console (press F12 to view).");
+  var settingsPanel = null;
+  function closeSettings() {
+    if (settingsPanel) {
+      settingsPanel.remove();
+      settingsPanel = null;
     }
   }
-  var filterPanel = null;
-  function freezeAuth() {
-    const hosts = findPaywallHosts(document, window.performance);
-    if (!hosts.length) {
-      alert("Popup Zapper: no known paywall/metering scripts detected on this page.");
-      return;
-    }
-    const filters = buildUblockFilters(hosts);
-    let copied = false;
-    try {
-      GM_setClipboard(filters);
-      copied = true;
-    } catch {
-    }
-    activityLog.add("freeze", `found ${hosts.length} paywall host(s): ${hosts.join(", ")}`);
-    if (filterPanel) filterPanel.remove();
-    filterPanel = createFilterPanel({
-      filters,
-      hosts,
-      copied,
-      onClose: () => {
-        if (filterPanel) {
-          filterPanel.remove();
-          filterPanel = null;
+  function openSettings() {
+    settingsPanel = createSettingsPanel({
+      library,
+      hostname,
+      version: VERSION,
+      onToggleRule: ({ rule, enabled }) => {
+        rule.enabled = enabled;
+        persist();
+        runOnce();
+        reopenSettings();
+      },
+      onEditRule: ({ rule }) => {
+        const next = prompt(`Edit rule value (matched by ${rule.type}):`, rule.value);
+        if (next != null && next.trim()) {
+          rule.value = next.trim();
+          persist();
+          runOnce();
+          reopenSettings();
         }
-      }
+      },
+      onDeleteRule: ({ rule, scope }) => {
+        if (scope === "global") library.global = library.global.filter((r) => r !== rule);
+        else {
+          const dom = library.domains[hostname];
+          if (dom) dom.rules = dom.rules.filter((r) => r !== rule);
+        }
+        persist();
+        runOnce();
+        reopenSettings();
+      },
+      onPromoteRule: ({ rule }) => {
+        const dom = library.domains[hostname];
+        if (dom) dom.rules = dom.rules.filter((r) => r !== rule);
+        library.global.push(rule);
+        persist();
+        reopenSettings();
+      },
+      onToggleCleanup: (on) => {
+        domainEntry().cleanup = on;
+        persist();
+        if (on) runOnce();
+      },
+      onCheckUpdates: checkUpdates,
+      onShowLog: toggleLog,
+      onDiagnostics: copyDiagnostics,
+      onClose: closeSettings
     });
-    document.body.appendChild(filterPanel);
+    document.body.appendChild(settingsPanel);
+  }
+  function reopenSettings() {
+    closeSettings();
+    openSettings();
+  }
+  function toggleSettings() {
+    if (settingsPanel) closeSettings();
+    else openSettings();
   }
   function toggleSite() {
     const i = library.disabledDomains.indexOf(hostname);
@@ -1333,114 +1689,40 @@ Blurred elements: ${blurred.length}`);
     refreshControl(true);
     if (enabled) runOnce();
   }
-  function toggleUnlock() {
-    const dom = domainEntry();
-    dom.unlock = !dom.unlock;
-    dom.autozap = dom.unlock;
-    dom.resetMeter = dom.unlock;
-    dom.freeze = dom.unlock;
-    freezeRestores = 0;
-    persist();
-    activityLog.add("unlock", dom.unlock ? "Unlock mode ON (gates/meter/keep-content)" : "Unlock mode OFF");
-    refreshControl(true);
-    if (dom.unlock) maybeResetMeter();
-    runOnce();
-  }
-  function fetchCleanCopy() {
-    if (typeof GM_xmlhttpRequest !== "function") {
-      alert("Popup Zapper: GM_xmlhttpRequest isn't available in this manager.");
-      return;
-    }
-    activityLog.add("clean", "fetching an anonymous (cookie-free) copy\u2026");
-    GM_xmlhttpRequest({
-      method: "GET",
-      url: location.href,
-      anonymous: true,
-      headers: { "Cache-Control": "no-cache" },
-      onload: (res) => {
-        try {
-          const extracted = extractCleanContent(res.responseText);
-          if (!extracted || extracted.len < 400) {
-            activityLog.add("clean", "cookie-free copy was also gated (server-side per account/IP)");
-            alert("Popup Zapper: the cookie-free copy was also gated, so this site decides server-side (per account/IP). Can't bypass that.");
-            return;
-          }
-          const cleanHtml = buildCleanDocument(res.responseText, location.href);
-          if (!cleanHtml) {
-            alert("Popup Zapper: couldn't build the clean copy.");
-            return;
-          }
-          const url = URL.createObjectURL(new Blob([cleanHtml], { type: "text/html" }));
-          activityLog.add("clean", `opening cleaned copy (${extracted.len} chars) in a script-free page`);
-          const win = window.open(url, "_blank");
-          if (!win) window.location.href = url;
-        } catch {
-          activityLog.add("clean", "error building clean copy");
-        }
-      },
-      onerror: () => {
-        activityLog.add("clean", "anonymous fetch failed");
-        alert("Popup Zapper: the anonymous fetch failed (blocked by the site or network).");
-      }
-    });
-  }
-  function saveContentNow() {
-    try {
-      const ok = captureSnapshot(document, window.sessionStorage, true);
-      activityLog.add("keep", ok ? "saved content snapshot (manual)" : "nothing substantial to save");
-      alert(ok ? "Popup Zapper: content saved. If the page reloads to a blocked version, use 'Restore content'." : "Popup Zapper: nothing substantial to save on this page yet.");
-    } catch {
-    }
-  }
-  function restoreContentNow() {
-    try {
-      const ok = restoreSnapshot(document, window.sessionStorage, true);
-      activityLog.add("keep", ok ? "restored content snapshot (manual)" : "no saved content for this page");
-      alert(ok ? "Popup Zapper: restored saved content." : "Popup Zapper: no saved content for this page.");
-    } catch {
-    }
-  }
-  function maybeResetMeter() {
-    const dom = (library.domains || {})[hostname];
-    if (!dom || !dom.resetMeter) return;
-    const cleared = resetMeter(document, window);
-    if (cleared.length) activityLog.add("meter", `cleared ${cleared.length} meter key(s): ${cleared.join(", ")}`);
-  }
   var control = null;
+  function safeResidual() {
+    try {
+      return hasResidualGating(document);
+    } catch {
+      return false;
+    }
+  }
   function refreshControl(open) {
     if (control) control.remove();
-    const dom = (library.domains || {})[hostname];
     control = createControlMenu({
       enabled: !library.disabledDomains.includes(hostname),
-      unlock: !!(dom && dom.unlock),
       hostname,
       open: !!open,
-      onLearn: startLearner,
-      onManage: toggleManage,
-      onToggleUnlock: toggleUnlock,
-      onRestoreContent: restoreContentNow,
-      onCleanCopy: fetchCleanCopy,
+      status: lastStatus,
+      showReveal: safeResidual(),
       onToggleSite: toggleSite,
-      onShowLog: toggleLog,
-      onDiagnostics: copyDiagnostics,
-      onFreeze: freezeAuth
+      onBlock: startBlock,
+      onRemovePaywall: doRemovePaywall,
+      onRevert: doRevert,
+      onReveal: doReveal,
+      onSettings: toggleSettings
     });
     document.body.appendChild(control);
   }
   try {
-    GM_registerMenuCommand("Learn a popup", startLearner);
-    GM_registerMenuCommand("Manage rules", toggleManage);
-    GM_registerMenuCommand("Toggle Unlock mode (this site)", toggleUnlock);
-    GM_registerMenuCommand("Fetch clean copy (cookie-free)", fetchCleanCopy);
-    GM_registerMenuCommand("Save content snapshot now", saveContentNow);
-    GM_registerMenuCommand("Restore content snapshot", restoreContentNow);
-    GM_registerMenuCommand("Show activity log", toggleLog);
-    GM_registerMenuCommand("Freeze auth (block paywall via uBlock)", freezeAuth);
-    GM_registerMenuCommand("Copy page diagnostics (debug)", copyDiagnostics);
+    GM_registerMenuCommand("Block a popup", startBlock);
+    GM_registerMenuCommand("Remove paywall", doRemovePaywall);
+    GM_registerMenuCommand("Revert last block", doRevert);
+    GM_registerMenuCommand("Reveal deeper (this page)", doReveal);
+    GM_registerMenuCommand("Settings", toggleSettings);
     GM_registerMenuCommand("Toggle zapper (this site)", toggleSite);
   } catch {
   }
-  maybeResetMeter();
   installReloadDefense();
   function boot() {
     runOnce();

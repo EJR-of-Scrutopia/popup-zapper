@@ -13,12 +13,12 @@ function own(el, kind) {
   return el;
 }
 
-// A bottom-right badge that opens a small action menu on click. Replaces global
-// hotkeys (which collide with Brave's built-in shortcuts).
+// Bottom-right badge that opens the action menu. Consolidated to a top on/off
+// toggle + three primary actions (Block / Remove paywall / Revert) + a status
+// strip + Settings. See the 2026-07-08 redesign spec.
 export function createControlMenu({
-  enabled, unlock, hostname, open,
-  onLearn, onManage, onToggleUnlock, onRestoreContent, onCleanCopy,
-  onToggleSite, onShowLog, onDiagnostics, onFreeze,
+  enabled, hostname, open, status, showReveal,
+  onToggleSite, onBlock, onRemovePaywall, onRevert, onReveal, onSettings,
 }) {
   const wrap = own(tag("div", { className: PREFIX + "control" }), "control");
   wrap.style.cssText = "position:fixed;bottom:12px;right:12px;z-index:2147483647;font:12px sans-serif;";
@@ -38,17 +38,24 @@ export function createControlMenu({
     `display:${open ? "block" : "none"};position:absolute;bottom:34px;right:0;background:#fff;` +
     "color:#111;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,.3);overflow:hidden;min-width:240px;";
 
-  // Header: which site, and whether the zapper is running here.
+  // Header: which site, and the top on/off switch for it.
   const header = tag("div");
   header.style.cssText = "padding:8px 12px;background:#f6f6f6;border-bottom:1px solid #e0e0e0;";
-  header.appendChild(tag("div", {
+  const hRow = tag("div");
+  hRow.style.cssText = "display:flex;justify-content:space-between;align-items:center;gap:8px;";
+  hRow.appendChild(tag("span", {
     textContent: hostname || "this site",
     style: "font-weight:bold;color:#333;word-break:break-all;",
   }));
-  header.appendChild(tag("div", {
-    textContent: enabled ? "● Running on this site" : "○ Turned off on this site",
-    style: `color:${enabled ? "#2e7d32" : "#b00020"};margin-top:2px;`,
-  }));
+  const toggle = tag("button", { textContent: enabled ? "On ●" : "Off ○" });
+  toggle.setAttribute("data-act", "site");
+  toggle.title = enabled ? "Turn off for this site" : "Turn on for this site";
+  toggle.style.cssText =
+    "border:0;border-radius:12px;padding:3px 10px;cursor:pointer;font-weight:bold;color:#fff;background:" +
+    (enabled ? "#2e7d32" : "#b00020");
+  toggle.addEventListener("click", onToggleSite);
+  hRow.appendChild(toggle);
+  header.appendChild(hRow);
   menu.appendChild(header);
 
   const item = (act, label, handler, accent) => {
@@ -59,36 +66,30 @@ export function createControlMenu({
       `background:#fff;color:${accent || "#111"};cursor:pointer;font:12px sans-serif;`;
     b.addEventListener("mouseenter", () => { b.style.background = "#f0f0f0"; });
     b.addEventListener("mouseleave", () => { b.style.background = "#fff"; });
-    b.addEventListener("click", handler);
+    if (handler) b.addEventListener("click", handler);
     menu.appendChild(b);
     return b;
   };
 
-  // The on/off switch for this site, worded as the action it performs.
-  item(
-    "site",
-    enabled ? "🔴 Turn OFF for this site" : "🟢 Turn ON for this site",
-    onToggleSite,
-    enabled ? "#b00020" : "#2e7d32",
-  );
-  // One bundled switch: removes gates, resets the meter, and keeps content.
-  if (onToggleUnlock) {
-    item(
-      "unlock",
-      unlock
-        ? "🔓 Unlock mode: ON  —  tap to turn off"
-        : "🔓 Unlock mode: OFF  —  remove gates, reset meter, keep content",
-      onToggleUnlock,
-      unlock ? "#2e7d32" : "#111",
-    );
+  item("block", "◎ Block a popup", onBlock);
+  item("paywall", "⇪ Remove paywall", onRemovePaywall);
+  item("revert", "↩ Revert last block", onRevert);
+
+  // Status strip: echoes the last action so it's clear something happened.
+  const strip = tag("div");
+  strip.setAttribute("data-pz-status", "");
+  strip.style.cssText =
+    "padding:7px 12px;border-top:1px solid #eee;border-bottom:1px solid #eee;" +
+    "color:#555;font:11px sans-serif;min-height:16px;background:#fafafa;";
+  strip.textContent = status || "Ready.";
+  menu.appendChild(strip);
+
+  // Contextual escalation: only shown when the page still looks gated.
+  if (showReveal) {
+    item("reveal", "🔎 Still blocked? Reveal deeper", onReveal, "#8a5a00");
   }
-  if (onRestoreContent) item("restore", "↩️ Restore saved content", onRestoreContent);
-  if (onCleanCopy) item("clean", "🌐 Fetch clean copy (cookie-free)", onCleanCopy);
-  if (onFreeze) item("freeze", "🧊 Freeze auth (block paywall)", onFreeze);
-  item("learn", "🎯 Learn a popup", onLearn);
-  item("manage", "📋 Manage rules", onManage);
-  item("log", "📜 Activity log", onShowLog);
-  if (onDiagnostics) item("diag", "🔧 Copy diagnostics (debug)", onDiagnostics);
+
+  item("settings", "⚙ Settings", onSettings);
 
   badge.addEventListener("click", () => {
     menu.style.display = menu.style.display === "none" ? "block" : "none";
@@ -99,7 +100,152 @@ export function createControlMenu({
   return wrap;
 }
 
-// Panel showing generated uBlock filters + how to apply them (Freeze auth).
+// Settings panel: per-site rule list (toggle/edit/delete/promote), tracker
+// cleanup toggle, and version + update check.
+export function createSettingsPanel({
+  library, hostname, version,
+  onToggleRule, onEditRule, onDeleteRule, onPromoteRule,
+  onToggleCleanup, onCheckUpdates, onShowLog, onDiagnostics, onClose,
+}) {
+  const panel = own(tag("div", { className: PREFIX + "settings" }), "settings");
+  panel.style.cssText =
+    "position:fixed;top:40px;right:12px;z-index:2147483647;background:#fff;" +
+    "color:#111;padding:12px;border-radius:8px;font:13px sans-serif;" +
+    "max-height:74vh;overflow:auto;box-shadow:0 2px 12px rgba(0,0,0,.3);min-width:300px;max-width:92vw;";
+
+  const head = tag("div");
+  head.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;";
+  head.appendChild(tag("strong", { textContent: "⚙ Settings" }));
+  const cls = tag("button", { textContent: "✕" });
+  cls.setAttribute("data-act", "close");
+  cls.style.cssText = "border:0;background:none;font-size:16px;cursor:pointer;";
+  cls.addEventListener("click", onClose);
+  head.appendChild(cls);
+  panel.appendChild(head);
+
+  // --- rules for this site ---
+  panel.appendChild(tag("div", {
+    textContent: "What's blocked on this site",
+    style: "font-weight:bold;color:#333;margin:6px 0 4px;",
+  }));
+
+  const addRule = (rule, scope) => {
+    const row = tag("div");
+    row.style.cssText = "display:flex;gap:6px;align-items:center;margin:4px 0;";
+
+    const cb = tag("input", { type: "checkbox", checked: rule.enabled !== false });
+    cb.setAttribute("data-act", "toggle-rule");
+    cb.addEventListener("change", () => onToggleRule({ rule, scope, enabled: cb.checked }));
+    row.appendChild(cb);
+
+    row.appendChild(tag("span", {
+      textContent: `[${scope}] ${rule.type}: ${rule.value}`,
+      style: "flex:1;word-break:break-all;color:" + (rule.enabled === false ? "#999" : "#111"),
+    }));
+
+    const edit = tag("button", { textContent: "Edit" });
+    edit.setAttribute("data-act", "edit-rule");
+    edit.addEventListener("click", () => onEditRule({ rule, scope }));
+    row.appendChild(edit);
+
+    const del = tag("button", { textContent: "Delete" });
+    del.setAttribute("data-act", "delete-rule");
+    del.addEventListener("click", () => onDeleteRule({ rule, scope }));
+    row.appendChild(del);
+
+    if (scope === "site") {
+      const prom = tag("button", { textContent: "Make global" });
+      prom.setAttribute("data-act", "promote-rule");
+      prom.addEventListener("click", () => onPromoteRule({ rule }));
+      row.appendChild(prom);
+    }
+    panel.appendChild(row);
+  };
+
+  const globals = library.global || [];
+  const dom = (library.domains || {})[hostname] || {};
+  const siteRules = dom.rules || [];
+  if (!globals.length && !siteRules.length) {
+    panel.appendChild(tag("div", {
+      textContent: "No rules yet. Use “Block a popup” to add one.",
+      style: "color:#888;margin:2px 0 6px;",
+    }));
+  }
+  for (const r of globals) addRule(r, "global");
+  for (const r of siteRules) addRule(r, "site");
+
+  // --- tracker cleanup toggle ---
+  const cleanupRow = tag("label");
+  cleanupRow.style.cssText =
+    "display:flex;gap:6px;align-items:center;margin:10px 0 4px;border-top:1px solid #eee;padding-top:8px;";
+  const cleanupCb = tag("input", { type: "checkbox", checked: dom.cleanup === true });
+  cleanupCb.setAttribute("data-act", "toggle-cleanup");
+  cleanupCb.addEventListener("change", () => onToggleCleanup(cleanupCb.checked));
+  cleanupRow.appendChild(cleanupCb);
+  cleanupRow.appendChild(tag("span", { textContent: "Delete tracking cookies/storage on this site (can log you out)" }));
+  panel.appendChild(cleanupRow);
+
+  // --- version + updates ---
+  const verRow = tag("div");
+  verRow.style.cssText =
+    "display:flex;gap:8px;align-items:center;margin:10px 0 4px;border-top:1px solid #eee;padding-top:8px;";
+  verRow.appendChild(tag("span", { textContent: `Popup Zapper v${version}`, style: "flex:1;color:#333;" }));
+  const upd = tag("button", { textContent: "Check for updates" });
+  upd.setAttribute("data-act", "check-updates");
+  upd.addEventListener("click", onCheckUpdates);
+  verRow.appendChild(upd);
+  panel.appendChild(verRow);
+
+  // --- debug tools ---
+  const dbg = tag("div");
+  dbg.style.cssText = "display:flex;gap:8px;margin-top:8px;";
+  const logBtn = tag("button", { textContent: "📜 Activity log" });
+  logBtn.setAttribute("data-act", "log");
+  logBtn.addEventListener("click", onShowLog);
+  dbg.appendChild(logBtn);
+  if (onDiagnostics) {
+    const diagBtn = tag("button", { textContent: "🔧 Copy diagnostics" });
+    diagBtn.setAttribute("data-act", "diag");
+    diagBtn.addEventListener("click", onDiagnostics);
+    dbg.appendChild(diagBtn);
+  }
+  panel.appendChild(dbg);
+
+  return panel;
+}
+
+// Small floating toolbar for the Block picker: candidate nav + tree nav + block.
+export function createPickerToolbar({ onPrev, onNext, onGrow, onShrink, onBlock, onCancel }) {
+  const mk = (act, label, handler, title) => {
+    const b = tag("button", { textContent: label, title: title || label });
+    b.setAttribute("data-act", act);
+    b.style.cssText = "margin:0 3px;padding:4px 9px;font:13px sans-serif;cursor:pointer;border-radius:4px;border:0;";
+    b.addEventListener("click", handler);
+    return b;
+  };
+  const bar = own(tag("div", { className: PREFIX + "picker" }), "picker");
+  bar.style.cssText =
+    "position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2147483647;" +
+    "background:#222;color:#fff;padding:8px 12px;border-radius:8px;font:13px sans-serif;" +
+    "box-shadow:0 2px 8px rgba(0,0,0,.4);display:flex;align-items:center;";
+  bar.appendChild(tag("span", { textContent: "Pick the popup: ", style: "margin-right:6px" }));
+  bar.appendChild(mk("prev", "◀", onPrev, "Previous candidate"));
+  bar.appendChild(mk("next", "▶", onNext, "Next candidate"));
+  bar.appendChild(mk("grow", "▲", onGrow, "Select parent ( [ )"));
+  bar.appendChild(mk("shrink", "▼", onShrink, "Select child ( ] )"));
+  const applyAll = tag("label", { style: "margin:0 8px;font:12px sans-serif;" });
+  const allCb = tag("input", { type: "checkbox" });
+  allCb.setAttribute("data-act", "all-sites");
+  applyAll.appendChild(allCb);
+  applyAll.appendChild(tag("span", { textContent: " all sites" }));
+  bar.appendChild(applyAll);
+  bar.appendChild(mk("block", "✓ Block", () => onBlock(allCb.checked), "Block this element"));
+  bar.appendChild(mk("cancel", "Cancel", onCancel));
+  return bar;
+}
+
+// Panel showing generated uBlock filters + how to apply them (Freeze auth,
+// offered as a secondary action from Remove paywall).
 export function createFilterPanel({ filters, hosts, copied, onClose }) {
   const panel = own(tag("div", { className: PREFIX + "filters" }), "filters");
   panel.style.cssText =
@@ -109,7 +255,7 @@ export function createFilterPanel({ filters, hosts, copied, onClose }) {
 
   const head = tag("div");
   head.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;";
-  head.appendChild(tag("strong", { textContent: "🧊 Freeze auth — block this paywall" }));
+  head.appendChild(tag("strong", { textContent: "🧊 Block this paywall permanently" }));
   const cls = tag("button", { textContent: "✕" });
   cls.setAttribute("data-act", "close");
   cls.style.cssText = "border:0;background:none;font-size:16px;cursor:pointer;";
@@ -170,7 +316,7 @@ export function createActivityPanel({ entries, onClear, onClose }) {
 
   if (!entries || entries.length === 0) {
     panel.appendChild(tag("div", {
-      textContent: "Nothing yet on this page. If a popup is here, use Learn a popup or turn on Auto-zap.",
+      textContent: "Nothing yet on this page. If a popup is here, use Block a popup.",
       style: "color:#aaa",
     }));
   } else {
@@ -180,64 +326,5 @@ export function createActivityPanel({ entries, onClear, onClose }) {
       panel.appendChild(tag("div", { textContent: `${time}  [${e.action}] ${e.detail}${times}` }));
     }
   }
-  return panel;
-}
-
-export function createLearnerToolbar({ onConfirm, onPick, onCancel }) {
-  const mk = (act, label) => {
-    const b = tag("button", { textContent: label });
-    b.setAttribute("data-act", act);
-    b.style.cssText = "margin:0 4px;padding:4px 8px;font:12px sans-serif;cursor:pointer;";
-    return b;
-  };
-  const bar = own(tag("div", { className: PREFIX + "toolbar" }, [
-    tag("span", { textContent: "Popup? " }),
-    mk("confirm", "✓ Yes"),
-    mk("pick", "Click the right one"),
-    mk("cancel", "Cancel"),
-  ]), "toolbar");
-  bar.style.cssText =
-    "position:fixed;top:12px;left:50%;transform:translateX(-50%);" +
-    "z-index:2147483647;background:#222;color:#fff;padding:8px 12px;" +
-    "border-radius:8px;font:13px sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.4);";
-  bar.querySelector("[data-act='confirm']").addEventListener("click", onConfirm);
-  bar.querySelector("[data-act='pick']").addEventListener("click", onPick);
-  bar.querySelector("[data-act='cancel']").addEventListener("click", onCancel);
-  return bar;
-}
-
-export function createManagePanel({ library, hostname, onDelete, onPromote }) {
-  const panel = own(tag("div", { className: PREFIX + "panel" }), "panel");
-  panel.style.cssText =
-    "position:fixed;top:40px;right:12px;z-index:2147483647;background:#fff;" +
-    "color:#111;padding:12px;border-radius:8px;font:13px sans-serif;" +
-    "max-height:70vh;overflow:auto;box-shadow:0 2px 12px rgba(0,0,0,.3);min-width:280px;";
-
-  const rows = [];
-  const addRow = (rule, scope) => {
-    const row = tag("div");
-    row.style.cssText = "display:flex;gap:6px;align-items:center;margin:4px 0;";
-    row.appendChild(tag("span", {
-      textContent: `[${scope}] ${rule.type}: ${rule.value}`,
-      style: "flex:1",
-    }));
-    const del = tag("button", { textContent: "Delete" });
-    del.setAttribute("data-act", "delete");
-    del.addEventListener("click", () => onDelete({ rule, scope }));
-    row.appendChild(del);
-    if (scope === "site") {
-      const prom = tag("button", { textContent: "Make global" });
-      prom.setAttribute("data-act", "promote");
-      prom.addEventListener("click", () => onPromote({ rule }));
-      row.appendChild(prom);
-    }
-    rows.push(row);
-  };
-
-  panel.appendChild(tag("strong", { textContent: "Popup Zapper rules" }));
-  for (const r of library.global || []) addRow(r, "global");
-  const dom = (library.domains || {})[hostname];
-  for (const r of (dom && dom.rules) || []) addRow(r, "site");
-  for (const row of rows) panel.appendChild(row);
   return panel;
 }
