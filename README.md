@@ -1,47 +1,62 @@
 # Popup Zapper
 
 A Violentmonkey userscript for Brave that removes login/consent/newsletter/paywall
-popups, restores blurred/locked content, defeats client-side reload traps, and learns
-new popups by click.
+popups, reveals blurred/gated content, defeats client-side reload traps, and lets you
+block new popups by pointing at them.
 
 > Run alongside **Brave Shields** (on by default) and **uBlock Origin** for
 > network-level tracker blocking — this script complements them, it does not replace them.
 
 ## Install
 
+**From the repo (auto-updates):**
+
 1. Install **Violentmonkey** (or **Tampermonkey**) in Brave.
-2. Build the script: `npm install && npm run build` (or use the prebuilt
-   `dist/popup-zapper.user.js` from the repo).
-3. Open the manager's **Dashboard** and drag `dist/popup-zapper.user.js` onto it,
-   then confirm the install.
+2. Open this raw file and confirm the install:
+   `https://raw.githubusercontent.com/edrowbo/popup-zapper/main/dist/popup-zapper.user.js`
+3. Violentmonkey checks that URL periodically, so new releases install themselves when
+   the author bumps the version.
 
-## Controls
+**From source:** `npm install && npm run build`, then drag `dist/popup-zapper.user.js`
+onto the Violentmonkey **Dashboard**.
 
-All actions are in the **⚡ Zapper** badge menu (bottom-right of every page), and
-also in the userscript manager's extension menu. No keyboard shortcuts are used,
-to avoid clashing with Brave's built-in shortcuts.
+## What runs automatically (no buttons)
 
-- **Learn a popup** — outlines its best guess; click the real popup to correct, and
-  the keyword is saved for this site.
-- **Manage rules** — delete a rule, or promote a per-site rule to global.
-- **Unlock mode (this site)** — one bundled switch for stubborn forced-signup gates.
-  Turns on, together: auto-zap (remove "register to continue" overlays), reset-meter
-  (wipe the gate's counter at document-start), and keep-content (snapshot the full
-  article and restore it if the page reloads into a gated version). Off by default,
-  per site. Heuristic and best-effort — check the activity log.
-- **Restore saved content** — manually put back the last full version Unlock mode saved.
-- **Activity log** — live view of what was removed, de-blurred, rejected, or blocked
-  (and a hint when nothing matched).
-- **Freeze auth (block paywall)** — scans the page for known metering/paywall vendors
-  (Piano/tinypass, Poool, Pelcro, Zephr, etc.), generates uBlock Origin filter lines,
-  copies them to the clipboard, and shows how to paste them into uBlock so the site's
-  meter is blocked permanently. (For metered content that downgrades after load.)
-- **Disable on this site** — per-site on/off switch.
+On every enabled site these happen silently:
 
-Tracker cleanup (delete analytics cookies/storage after consent) can be toggled per
-site from the userscript manager's extension menu.
+- **Reject cookie/consent banners** — clicks reject / hides the banner.
+- **Anti-reload** — blocks automatic reloads and redirects and strips `<meta refresh>`;
+  the page only reloads when *you* refresh it.
+- **De-blur & de-veil** — strips `blur()` filters and removes full-screen metering veils
+  (e.g. ArchDaily's Piano overlay) so gated articles and images become readable.
+
+## The menu
+
+The **⚡ Zapper** badge (bottom-right) opens a small menu; the same actions are in the
+userscript manager's extension menu.
+
+- **On/off toggle** (top) — enable or disable the zapper for this site.
+- **Block a popup** — opens a picker. It highlights the most likely popups first; press
+  ▶ / ◀ to cycle candidates and ▲ / ▼ (or `[` / `]`) to grow/shrink the selection up and
+  down the page structure until the outline wraps exactly the thing. Tick **all sites**
+  to make it global, then **Block**. A rule is saved so it's removed automatically next
+  time.
+- **Remove paywall** — for stubborn metered articles: wipes the meter, grabs the content,
+  and opens a clean, script-free copy in a **new tab** (your original tab is kept). If the
+  site gates server-side, it offers uBlock filter lines to block the vendor permanently.
+- **Revert** — undo the last Block and bring the element back.
+- **Status strip** — shows the last thing the zapper did, so you can tell it worked.
+- **Reveal deeper** — appears only when a page still looks gated after the automatic pass.
+  Runs the aggressive restores (un-truncate clamped articles, un-hide locked elements)
+  that are too risky to run everywhere by default.
+- **Settings** — see every rule saved for this site, toggle each on/off (to see what it
+  hides), edit, delete, or promote to global; toggle tracker cleanup (delete analytics
+  cookies/storage — can log you out); see the version and **check for updates**; open the
+  activity log and diagnostics.
 
 ## Develop
 
 - `npm test` — run unit tests
 - `npm run build` — rebuild `dist/popup-zapper.user.js`
+- `npm run release` — bump the version, rebuild, commit, tag, and push (this is what makes
+  installed copies auto-update)
