@@ -190,19 +190,19 @@ Opened from the badge; its own panel:
   `Up to date ✓` or `vA.B.C available — your userscript manager will install it`.
 - **Activity log** and **Copy diagnostics** (debug).
 
-## 7. Data Model & Migration
+## 7. Data Model
 
-Rules are currently plain keyword **strings** per domain. To support per-rule toggles
-and editing, a rule becomes an object:
+Rules are **already objects** — `{ type, value, action }` (see `extract.js`/`rules.js`),
+and `getActiveRules` already filters out `enabled === false`. So there is **no schema
+migration**; we only need to:
 
-```js
-{ keyword: "register to continue", enabled: true }
-```
+- Have Settings write `rule.enabled = true/false` on toggle (default treated as `true`
+  when the field is absent, which `getActiveRules` already does).
+- Support **edit** by rewriting a rule's `value` (and re-running the blocker).
+- Keep `loadLibrary`'s existing version guard; `SCHEMA_VERSION` stays `1`.
 
-- Bump `SCHEMA_VERSION`; `loadLibrary` migrates existing string rules to
-  `{ keyword, enabled: true }`. Global rules migrate the same way.
-- `getActiveRules`/`matchesRule` filter out `enabled === false`.
-- Backward compatible: unknown/older shapes coerce safely; never throw on load.
+The only additive per-rule field is the optional boolean `enabled`. Nothing the user
+has already taught is lost.
 
 ## 8. Distribution & Auto-Update
 
