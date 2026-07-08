@@ -50,12 +50,17 @@ describe("createControlMenu", () => {
     expect(onReveal).toHaveBeenCalledOnce();
   });
 
-  it("reflects disabled state in the badge label", () => {
-    const ctrl = createControlMenu({
-      enabled: false, hostname: "x.com", open: false, status: "",
+  it("badge is a monochrome zap that expands to the name, with state in the title", () => {
+    const mk = (enabled) => createControlMenu({
+      enabled, hostname: "x.com", open: false, status: "",
       onToggleSite() {}, onBlock() {}, onRemovePaywall() {}, onRevert() {}, onReveal() {}, onSettings() {},
     });
-    expect(ctrl.querySelector("[data-act='menu']").textContent).toMatch(/off/i);
+    const on = mk(true).querySelector("[data-act='menu']");
+    expect(on.querySelector("svg")).not.toBeNull();       // zap icon present
+    expect(on.textContent).toContain("Popup Zapper");      // name (hidden until hover)
+    expect(on.style.mixBlendMode).toBe("difference");      // adapts to background
+    expect(on.title).toMatch(/on/i);
+    expect(mk(false).querySelector("[data-act='menu']").title).toMatch(/off/i);
   });
 });
 

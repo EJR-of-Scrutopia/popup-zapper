@@ -23,15 +23,35 @@ export function createControlMenu({
   const wrap = own(tag("div", { className: PREFIX + "control" }), "control");
   wrap.style.cssText = "position:fixed;bottom:12px;right:12px;z-index:2147483647;font:12px sans-serif;";
 
-  const badge = tag("button", {
-    textContent: enabled ? "⚡ Zapper: ON" : "⚡ Zapper: OFF",
-    title: "Popup Zapper menu",
-  });
+  // Monochrome zap badge: shows just the bolt, expands to the name on hover.
+  // mix-blend-mode:difference renders it as the inverse of whatever is behind it,
+  // so it stays legible on any background (black over light, white over dark).
+  const badge = tag("button");
   badge.setAttribute("data-act", "menu");
+  badge.title = enabled ? "Popup Zapper: on — click for menu" : "Popup Zapper: off — click for menu";
+  // No opacity here: opacity on the same element isolates the blend and breaks it.
+  // OFF state is shown by a struck-through bolt (and the title) instead.
   badge.style.cssText =
-    "padding:5px 10px;border:0;border-radius:6px;color:#fff;cursor:pointer;" +
-    "opacity:.9;box-shadow:0 1px 4px rgba(0,0,0,.4);font-weight:bold;background:" +
-    (enabled ? "#2e7d32" : "#b00020");
+    "display:flex;align-items:center;gap:6px;border:0;background:transparent;cursor:pointer;" +
+    "padding:4px 6px;color:#fff;font:bold 13px sans-serif;line-height:1;" +
+    "mix-blend-mode:difference;-webkit-mix-blend-mode:difference;";
+
+  const icon = tag("span");
+  icon.style.cssText = "display:flex;flex:0 0 auto;";
+  const strike = enabled ? "" : '<line x1="3" y1="3" x2="21" y2="21" stroke="currentColor" stroke-width="2.5"/>';
+  icon.innerHTML =
+    '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
+    '<path fill="currentColor" d="M7 2v11h3v9l7-12h-4l4-8z"/>' + strike + '</svg>';
+
+  const name = tag("span", { textContent: "Popup Zapper" });
+  name.style.cssText =
+    "max-width:0;overflow:hidden;white-space:nowrap;opacity:0;" +
+    "transition:max-width .25s ease,opacity .25s ease;";
+
+  badge.appendChild(icon);
+  badge.appendChild(name);
+  badge.addEventListener("mouseenter", () => { name.style.maxWidth = "130px"; name.style.opacity = "1"; });
+  badge.addEventListener("mouseleave", () => { name.style.maxWidth = "0"; name.style.opacity = "0"; });
 
   const menu = tag("div");
   menu.style.cssText =
