@@ -1,7 +1,8 @@
 import { build } from "esbuild";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { HEADER } from "./src/userscript-header.js";
+import { buildHeader } from "./src/userscript-header.js";
 
+const pkg = JSON.parse(readFileSync("package.json", "utf8"));
 mkdirSync("dist", { recursive: true });
 
 await build({
@@ -14,5 +15,5 @@ await build({
 });
 
 const body = readFileSync("dist/popup-zapper.bundle.js", "utf8");
-writeFileSync("dist/popup-zapper.user.js", HEADER + "\n" + body);
-console.log("Built dist/popup-zapper.user.js");
+writeFileSync("dist/popup-zapper.user.js", buildHeader(pkg.version) + "\n" + body);
+console.log(`Built dist/popup-zapper.user.js (v${pkg.version})`);

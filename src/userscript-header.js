@@ -1,9 +1,16 @@
-export const HEADER = `// ==UserScript==
+const RAW = "https://raw.githubusercontent.com/edrowbo/popup-zapper/main/dist/popup-zapper.user.js";
+
+export function buildHeader(version) {
+  return `// ==UserScript==
 // @name         Popup Zapper
-// @namespace    https://github.com/param/popup-zapper
-// @version      1.9.0
-// @description  Remove login/consent/newsletter/paywall popups, restore blurred content, defeat reload traps, auto-zap overlays, and learn new popups by click.
+// @namespace    https://github.com/edrowbo/popup-zapper
+// @version      ${version}
+// @description  Remove login/consent/newsletter/paywall popups, reveal blurred/gated content, defeat reload traps, and learn popups by click.
 // @author       Param
+// @homepageURL  https://github.com/edrowbo/popup-zapper
+// @supportURL   https://github.com/edrowbo/popup-zapper/issues
+// @updateURL    ${RAW}
+// @downloadURL  ${RAW}
 // @match        *://*/*
 // @run-at       document-start
 // @grant        GM_setValue
@@ -11,7 +18,9 @@ export const HEADER = `// ==UserScript==
 // @grant        GM_registerMenuCommand
 // @grant        GM_setClipboard
 // @grant        GM_xmlhttpRequest
+// @grant        GM_info
 // @connect      *
 // @noframes
 // ==/UserScript==
 `;
+}

@@ -1,12 +1,13 @@
 {
   "name": "popup-zapper",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "type": "module",
   "private": true,
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "build": "node build.js"
+    "build": "node build.js",
+    "release": "npm version patch -m \"chore(release): v%s\" && npm run build && git add dist/popup-zapper.user.js && git commit -m \"chore: rebuild dist\" && git push --follow-tags"
   },
   "devDependencies": {
     "esbuild": "^0.23.0",
