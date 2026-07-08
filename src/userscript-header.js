@@ -1,14 +1,14 @@
-const RAW = "https://raw.githubusercontent.com/edrowbo/popup-zapper/master/dist/popup-zapper.user.js";
+const RAW = "https://raw.githubusercontent.com/EJR-of-Scrutopia/popup-zapper/master/dist/popup-zapper.user.js";
 
 export function buildHeader(version) {
   return `// ==UserScript==
 // @name         Popup Zapper
-// @namespace    https://github.com/edrowbo/popup-zapper
+// @namespace    https://github.com/EJR-of-Scrutopia/popup-zapper
 // @version      ${version}
 // @description  Remove login/consent/newsletter/paywall popups, reveal blurred/gated content, defeat reload traps, and learn popups by click.
 // @author       Param
-// @homepageURL  https://github.com/edrowbo/popup-zapper
-// @supportURL   https://github.com/edrowbo/popup-zapper/issues
+// @homepageURL  https://github.com/EJR-of-Scrutopia/popup-zapper
+// @supportURL   https://github.com/EJR-of-Scrutopia/popup-zapper/issues
 // @updateURL    ${RAW}
 // @downloadURL  ${RAW}
 // @match        *://*/*

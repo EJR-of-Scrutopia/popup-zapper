@@ -206,11 +206,11 @@ has already taught is lost.
 
 ## 8. Distribution & Auto-Update
 
-- **Make `edrowbo/popup-zapper` public** so the raw `.user.js` URL resolves.
+- **Make `EJR-of-Scrutopia/popup-zapper` public** so the raw `.user.js` URL resolves.
 - **Header fixes** (`src/userscript-header.js`):
-  - `@namespace https://github.com/edrowbo/popup-zapper`
+  - `@namespace https://github.com/EJR-of-Scrutopia/popup-zapper`
   - add `@updateURL`  and `@downloadURL` →
-    `https://raw.githubusercontent.com/edrowbo/popup-zapper/main/dist/popup-zapper.user.js`
+    `https://raw.githubusercontent.com/EJR-of-Scrutopia/popup-zapper/main/dist/popup-zapper.user.js`
   - `@homepageURL`/`@supportURL` → the repo.
 - **Single source of version truth:** today `package.json` says `1.0.0` while the
   header says `1.9.0`. Fix: version lives in `package.json`; `build.js` injects it into

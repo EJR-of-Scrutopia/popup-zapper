@@ -13,8 +13,8 @@
 - Repo root: the `popup-zapper` project (its own git; **not** the comfyui repo). All paths below are relative to it.
 - Never let one failure break the page: keep the existing `safe()` / `safeVal()` wrappers around any DOM work run at page scope.
 - The zapper's own UI is marked `[data-pz]`; every DOM-scanning pass must skip `el.closest("[data-pz]")`.
-- Distribution URL (verbatim): `https://raw.githubusercontent.com/edrowbo/popup-zapper/main/dist/popup-zapper.user.js`
-- Namespace (verbatim): `https://github.com/edrowbo/popup-zapper`
+- Distribution URL (verbatim): `https://raw.githubusercontent.com/EJR-of-Scrutopia/popup-zapper/main/dist/popup-zapper.user.js`
+- Namespace (verbatim): `https://github.com/EJR-of-Scrutopia/popup-zapper`
 - Rules are objects `{ type, value, action, enabled? }`. Absent `enabled` means enabled. No schema migration; `SCHEMA_VERSION` stays `1`.
 - Tests run with `npm test` (`vitest run`). Every task ends green.
 - Commit after every task with a `feat:`/`fix:`/`chore:` message.
@@ -43,9 +43,9 @@ describe("buildHeader", () => {
   it("injects the version and update URLs", () => {
     const h = buildHeader("2.0.0");
     expect(h).toContain("// @version      2.0.0");
-    expect(h).toContain("// @namespace    https://github.com/edrowbo/popup-zapper");
-    expect(h).toContain("// @updateURL    https://raw.githubusercontent.com/edrowbo/popup-zapper/main/dist/popup-zapper.user.js");
-    expect(h).toContain("// @downloadURL  https://raw.githubusercontent.com/edrowbo/popup-zapper/main/dist/popup-zapper.user.js");
+    expect(h).toContain("// @namespace    https://github.com/EJR-of-Scrutopia/popup-zapper");
+    expect(h).toContain("// @updateURL    https://raw.githubusercontent.com/EJR-of-Scrutopia/popup-zapper/main/dist/popup-zapper.user.js");
+    expect(h).toContain("// @downloadURL  https://raw.githubusercontent.com/EJR-of-Scrutopia/popup-zapper/main/dist/popup-zapper.user.js");
   });
   it("has no unreplaced placeholder", () => {
     expect(buildHeader("2.0.0")).not.toContain("__VERSION__");
@@ -62,17 +62,17 @@ Expected: FAIL — `buildHeader is not a function`.
 
 ```js
 // src/userscript-header.js
-const RAW = "https://raw.githubusercontent.com/edrowbo/popup-zapper/main/dist/popup-zapper.user.js";
+const RAW = "https://raw.githubusercontent.com/EJR-of-Scrutopia/popup-zapper/main/dist/popup-zapper.user.js";
 
 export function buildHeader(version) {
   return `// ==UserScript==
 // @name         Popup Zapper
-// @namespace    https://github.com/edrowbo/popup-zapper
+// @namespace    https://github.com/EJR-of-Scrutopia/popup-zapper
 // @version      ${version}
 // @description  Remove login/consent/newsletter/paywall popups, reveal blurred/gated content, defeat reload traps, and learn popups by click.
 // @author       Param
-// @homepageURL  https://github.com/edrowbo/popup-zapper
-// @supportURL   https://github.com/edrowbo/popup-zapper/issues
+// @homepageURL  https://github.com/EJR-of-Scrutopia/popup-zapper
+// @supportURL   https://github.com/EJR-of-Scrutopia/popup-zapper/issues
 // @updateURL    ${RAW}
 // @downloadURL  ${RAW}
 // @match        *://*/*
@@ -968,7 +968,7 @@ function checkUpdates() {
   if (typeof GM_xmlhttpRequest !== "function") { alert("Update check unavailable."); return; }
   GM_xmlhttpRequest({
     method: "GET",
-    url: "https://raw.githubusercontent.com/edrowbo/popup-zapper/main/dist/popup-zapper.user.js",
+    url: "https://raw.githubusercontent.com/EJR-of-Scrutopia/popup-zapper/main/dist/popup-zapper.user.js",
     onload: (res) => alert("Popup Zapper: " + updateMessage(VERSION, parseVersion(res.responseText))),
     onerror: () => alert("Popup Zapper: " + updateMessage(VERSION, null)),
   });
@@ -1026,13 +1026,13 @@ git commit -m "docs: README for the consolidated UI + auto-update"
 
 - [ ] **Step 6: Make the repo public + release**
 
-On GitHub, set `edrowbo/popup-zapper` to **Public** (Settings → General → Danger Zone → Change visibility). Then run:
+On GitHub, set `EJR-of-Scrutopia/popup-zapper` to **Public** (Settings → General → Danger Zone → Change visibility). Then run:
 
 ```bash
 npm run release
 ```
 
-Confirm `https://raw.githubusercontent.com/edrowbo/popup-zapper/main/dist/popup-zapper.user.js` returns HTTP 200 and shows the new `@version`. Send that URL to the friend; his Violentmonkey installs once and auto-updates on future `npm run release`.
+Confirm `https://raw.githubusercontent.com/EJR-of-Scrutopia/popup-zapper/main/dist/popup-zapper.user.js` returns HTTP 200 and shows the new `@version`. Send that URL to the friend; his Violentmonkey installs once and auto-updates on future `npm run release`.
 
 ---
 

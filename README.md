@@ -13,7 +13,7 @@ block new popups by pointing at them.
 
 1. Install **Violentmonkey** (or **Tampermonkey**) in Brave.
 2. Open this raw file and confirm the install:
-   `https://raw.githubusercontent.com/edrowbo/popup-zapper/master/dist/popup-zapper.user.js`
+   `https://raw.githubusercontent.com/EJR-of-Scrutopia/popup-zapper/master/dist/popup-zapper.user.js`
 3. Violentmonkey checks that URL periodically, so new releases install themselves when
    the author bumps the version.
 
