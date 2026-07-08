@@ -20,7 +20,7 @@ import {
 const getV = (k) => GM_getValue(k);
 const setV = (k, v) => GM_setValue(k, v);
 const hostname = location.hostname.replace(/^www\./, "");
-const RAW_URL = "https://raw.githubusercontent.com/edrowbo/popup-zapper/main/dist/popup-zapper.user.js";
+const RAW_URL = "https://raw.githubusercontent.com/edrowbo/popup-zapper/master/dist/popup-zapper.user.js";
 const VERSION = (typeof GM_info !== "undefined" && GM_info && GM_info.script)
   ? GM_info.script.version : "0.0.0";
 

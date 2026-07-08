@@ -1,4 +1,4 @@
-const RAW = "https://raw.githubusercontent.com/edrowbo/popup-zapper/main/dist/popup-zapper.user.js";
+const RAW = "https://raw.githubusercontent.com/edrowbo/popup-zapper/master/dist/popup-zapper.user.js";
 
 export function buildHeader(version) {
   return `// ==UserScript==

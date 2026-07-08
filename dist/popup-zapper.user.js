@@ -6,8 +6,8 @@
 // @author       Param
 // @homepageURL  https://github.com/edrowbo/popup-zapper
 // @supportURL   https://github.com/edrowbo/popup-zapper/issues
-// @updateURL    https://raw.githubusercontent.com/edrowbo/popup-zapper/main/dist/popup-zapper.user.js
-// @downloadURL  https://raw.githubusercontent.com/edrowbo/popup-zapper/main/dist/popup-zapper.user.js
+// @updateURL    https://raw.githubusercontent.com/edrowbo/popup-zapper/master/dist/popup-zapper.user.js
+// @downloadURL  https://raw.githubusercontent.com/edrowbo/popup-zapper/master/dist/popup-zapper.user.js
 // @match        *://*/*
 // @run-at       document-start
 // @grant        GM_setValue
@@ -1303,7 +1303,7 @@ Blurred elements: ${blurred.length}`);
   var getV = (k) => GM_getValue(k);
   var setV = (k, v) => GM_setValue(k, v);
   var hostname = location.hostname.replace(/^www\./, "");
-  var RAW_URL = "https://raw.githubusercontent.com/edrowbo/popup-zapper/main/dist/popup-zapper.user.js";
+  var RAW_URL = "https://raw.githubusercontent.com/edrowbo/popup-zapper/master/dist/popup-zapper.user.js";
   var VERSION = typeof GM_info !== "undefined" && GM_info && GM_info.script ? GM_info.script.version : "0.0.0";
   var library = loadLibrary(getV);
   var persist = () => saveLibrary(setV, library);
