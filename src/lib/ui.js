@@ -19,8 +19,22 @@ function prefersDark() {
   catch { return false; }
 }
 
+// Theme preference: "auto" follows the OS, "light"/"dark" force it. Set once at
+// boot (and whenever the user picks from Settings) so every panel repaints to match.
+let themeMode = "auto";
+export function setTheme(mode) {
+  themeMode = (mode === "light" || mode === "dark") ? mode : "auto";
+  return themeMode;
+}
+export function getTheme() { return themeMode; }
+function isDark() {
+  if (themeMode === "dark") return true;
+  if (themeMode === "light") return false;
+  return prefersDark();
+}
+
 export function palette() {
-  return prefersDark()
+  return isDark()
     ? {
       bg: "#1f1f22", fg: "#e8e8ea", sub: "#a2a2a8", border: "#3a3a40", hover: "#2c2c31",
       head: "#26262b", accent: "#4caf50", danger: "#ff5c5c", chip: "#2a2a30",
@@ -113,7 +127,7 @@ export function createControlMenu({
     textContent: hostname || "this site",
     style: `font-weight:bold;color:${t.fg};word-break:break-all;`,
   }));
-  const toggle = tag("button", { textContent: enabled ? "On ●" : "Off ○" });
+  const toggle = tag("button", { textContent: enabled ? "On" : "Off" });
   toggle.setAttribute("data-act", "site");
   toggle.title = enabled ? "Turn off for this site" : "Turn on for this site";
   toggle.style.cssText =
@@ -137,9 +151,9 @@ export function createControlMenu({
     return b;
   };
 
-  item("block", "◎ Block a popup", onBlock);
-  item("paywall", "⇪ Remove paywall", onRemovePaywall);
-  item("revert", "↩ Revert last block", onRevert);
+  item("block", "🚫  Block a popup", onBlock);
+  item("paywall", "🔓  Remove paywall", onRemovePaywall);
+  item("revert", "↩️  Revert last block", onRevert);
 
   // Status strip: echoes the last action so it's clear something happened.
   const strip = tag("div");
@@ -152,10 +166,10 @@ export function createControlMenu({
 
   // Contextual escalation: only shown when the page still looks gated.
   if (showReveal) {
-    item("reveal", "🔎 Still blocked? Reveal deeper", onReveal, prefersDark() ? "#e0a44a" : "#8a5a00");
+    item("reveal", "🔍  Reveal hidden content", onReveal, isDark() ? "#e0a44a" : "#8a5a00");
   }
 
-  item("settings", "⚙ Settings", onSettings);
+  item("settings", "⚙️  Settings", onSettings);
 
   wrap.appendChild(badge);
   wrap.appendChild(menu);
@@ -165,9 +179,10 @@ export function createControlMenu({
 // Settings panel: per-site rule list (toggle/edit/delete/promote), tracker
 // cleanup toggle, and version + update check.
 export function createSettingsPanel({
-  library, hostname, version,
+  library, hostname, version, theme, update,
   onToggleRule, onEditRule, onDeleteRule, onPromoteRule,
-  onToggleCleanup, onCheckUpdates, onShowLog, onDiagnostics, onClose,
+  onToggleCleanup, onSetTheme, onCheckUpdates, onInstallUpdate, onReloadPage,
+  onShowLog, onDiagnostics, onClose,
 }) {
   const t = palette();
   const panel = own(tag("div", { className: PREFIX + "settings" }), "settings");
@@ -213,7 +228,7 @@ export function createSettingsPanel({
     row.appendChild(cb);
 
     row.appendChild(tag("span", {
-      textContent: `[${scope}] ${rule.type}: ${rule.value}`,
+      textContent: `${rule.type} “${rule.value}” · ${scope === "global" ? "all sites" : "this site"}`,
       style: "flex:1;word-break:break-all;color:" + (rule.enabled === false ? t.sub : t.fg),
     }));
 
@@ -246,13 +261,58 @@ export function createSettingsPanel({
   cleanupRow.appendChild(tag("span", { textContent: "Delete tracking cookies/storage on this site (can log you out)" }));
   panel.appendChild(cleanupRow);
 
-  // --- version + updates ---
+  // --- appearance (theme) ---
+  if (onSetTheme) {
+    const themeRow = tag("div");
+    themeRow.style.cssText =
+      `display:flex;gap:8px;align-items:center;margin:10px 0 4px;border-top:1px solid ${t.border};padding-top:8px;`;
+    themeRow.appendChild(tag("span", { textContent: "Appearance", style: `flex:1;color:${t.sub};` }));
+    const seg = tag("div");
+    seg.style.cssText = `display:flex;border:1px solid ${t.border};border-radius:6px;overflow:hidden;`;
+    const cur = theme || "auto";
+    [["auto", "Auto"], ["light", "Light"], ["dark", "Dark"]].forEach(([mode, label], i) => {
+      const on = cur === mode;
+      const b = tag("button", { textContent: label });
+      b.setAttribute("data-act", "theme-" + mode);
+      b.style.cssText =
+        "border:0;padding:3px 10px;cursor:pointer;font:12px sans-serif;" +
+        (i ? `border-left:1px solid ${t.border};` : "") +
+        (on ? `background:${t.accent};color:#fff;font-weight:bold;` : `background:${t.head};color:${t.fg};`);
+      if (!on) b.addEventListener("click", () => onSetTheme(mode));
+      seg.appendChild(b);
+    });
+    themeRow.appendChild(seg);
+    panel.appendChild(themeRow);
+  }
+
+  // --- version + updates (all in-panel; no native dialogs) ---
+  const u = update || { state: "idle" };
   const verRow = tag("div");
   verRow.style.cssText =
     `display:flex;gap:8px;align-items:center;margin:10px 0 4px;border-top:1px solid ${t.border};padding-top:8px;`;
   verRow.appendChild(tag("span", { textContent: `Popup Zapper v${version}`, style: `flex:1;color:${t.sub};` }));
-  verRow.appendChild(btn("Check for updates", "check-updates", onCheckUpdates));
+  // Right-hand control depends on where we are in the update flow.
+  if (u.state === "available") {
+    verRow.appendChild(btn(`Update to v${u.remote}`, "install-update", onInstallUpdate));
+  } else if (u.state === "opened") {
+    verRow.appendChild(btn("↻ Reload to apply", "reload-page", onReloadPage));
+  } else {
+    verRow.appendChild(btn(u.state === "checking" ? "Checking…" : "Check for updates", "check-updates",
+      u.state === "checking" ? null : onCheckUpdates));
+  }
   panel.appendChild(verRow);
+
+  // Sub-line explaining the current update state, themed (no browser popups).
+  const noteText = {
+    checking: "Checking for a new version…",
+    current: "You're on the latest version ✓",
+    error: "Couldn't check — network blocked.",
+    available: `Version ${u.remote} is ready to install.`,
+    opened: "Install page opened. Click Update/Reinstall there, then reload here.",
+  }[u.state];
+  if (noteText) {
+    panel.appendChild(tag("div", { textContent: noteText, style: `color:${t.sub};font-size:12px;margin:2px 0 4px;` }));
+  }
 
   // --- debug tools ---
   const dbg = tag("div");

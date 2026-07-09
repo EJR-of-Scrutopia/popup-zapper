@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   createControlMenu, createSettingsPanel, createPickerToolbar, createActivityPanel,
-  formatStatus,
+  formatStatus, palette, setTheme, getTheme,
 } from "../src/lib/ui.js";
 
 beforeEach(() => { document.body.innerHTML = ""; });
@@ -84,6 +84,16 @@ describe("createControlMenu", () => {
   });
 });
 
+describe("theme", () => {
+  it("forces light/dark palettes and reports the current mode", () => {
+    const light = (setTheme("light"), palette());
+    const dark = (setTheme("dark"), palette());
+    expect(getTheme()).toBe("dark");
+    expect(light.bg).not.toBe(dark.bg);
+    expect(setTheme("nonsense")).toBe("auto"); // invalid falls back to auto
+  });
+});
+
 describe("formatStatus", () => {
   it("maps raw log actions to friendly phrases", () => {
     expect(formatStatus("popup", "removed div.modal (matched rule)")).toBe("Blocked a popup");
@@ -99,17 +109,49 @@ describe("createSettingsPanel", () => {
   const base = {
     hostname: "x.com", version: "2.0.0",
     onToggleRule: () => {}, onEditRule: () => {}, onDeleteRule: () => {}, onPromoteRule: () => {},
-    onToggleCleanup: () => {}, onCheckUpdates: () => {}, onShowLog: () => {}, onDiagnostics: () => {}, onClose: () => {},
+    onToggleCleanup: () => {}, onSetTheme: () => {}, onCheckUpdates: () => {},
+    onInstallUpdate: () => {}, onReloadPage: () => {},
+    onShowLog: () => {}, onDiagnostics: () => {}, onClose: () => {},
   };
 
   it("lists rules with toggles and shows the version", () => {
     const library = { global: [], domains: { "x.com": { rules: [{ type: "class", value: "modal", enabled: true }] } } };
     const el = createSettingsPanel({ ...base, library });
-    expect(el.textContent).toContain("class: modal");
+    expect(el.textContent).toMatch(/class .*modal/);
+    expect(el.textContent).toContain("this site");
     expect(el.textContent).toContain("2.0.0");
     expect(el.querySelector("[data-act='toggle-rule']")).not.toBeNull();
     expect(el.querySelector("[data-act='edit-rule']")).not.toBeNull();
     expect(el.querySelector("[data-act='delete-rule']")).not.toBeNull();
+  });
+
+  it("offers a theme control and fires onSetTheme with the chosen mode", () => {
+    const onSetTheme = vi.fn();
+    const library = { global: [], domains: {} };
+    const el = createSettingsPanel({ ...base, library, theme: "auto", onSetTheme });
+    el.querySelector("[data-act='theme-dark']").click();
+    expect(onSetTheme).toHaveBeenCalledWith("dark");
+    // The currently-selected mode is inert (no re-fire).
+    onSetTheme.mockClear();
+    el.querySelector("[data-act='theme-auto']").click();
+    expect(onSetTheme).not.toHaveBeenCalled();
+  });
+
+  it("drives the in-panel update flow without native dialogs", () => {
+    const onInstallUpdate = vi.fn(), onReloadPage = vi.fn();
+    const library = { global: [], domains: {} };
+    const avail = createSettingsPanel({ ...base, library, update: { state: "available", remote: "2.0.4" }, onInstallUpdate });
+    const installBtn = avail.querySelector("[data-act='install-update']");
+    expect(installBtn.textContent).toContain("2.0.4");
+    installBtn.click();
+    expect(onInstallUpdate).toHaveBeenCalledOnce();
+
+    const opened = createSettingsPanel({ ...base, library, update: { state: "opened", remote: "2.0.4" }, onReloadPage });
+    opened.querySelector("[data-act='reload-page']").click();
+    expect(onReloadPage).toHaveBeenCalledOnce();
+
+    const current = createSettingsPanel({ ...base, library, update: { state: "current" } });
+    expect(current.textContent).toMatch(/latest version/i);
   });
 
   it("fires onToggleRule with the new enabled state", () => {

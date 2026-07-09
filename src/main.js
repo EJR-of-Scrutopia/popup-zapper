@@ -15,6 +15,7 @@ import { parseVersion, updatePlan } from "./lib/updates.js";
 import {
   createControlMenu, createSettingsPanel, createPickerToolbar,
   createActivityPanel, createFilterPanel, formatStatus,
+  setTheme, getTheme,
 } from "./lib/ui.js";
 
 const getV = (k) => GM_getValue(k);
@@ -26,6 +27,10 @@ const VERSION = (typeof GM_info !== "undefined" && GM_info && GM_info.script)
 
 let library = loadLibrary(getV);
 const persist = () => saveLibrary(setV, library);
+
+// Appearance preference (global, not per-site): "auto" | "light" | "dark".
+const THEME_KEY = "pz-theme";
+setTheme(getV(THEME_KEY) || "auto");
 const activityLog = createActivityLog();
 const undo = createUndoStack();
 
@@ -268,25 +273,32 @@ function doRemovePaywall() {
 // ---- update check ----
 // A userscript can't install itself; only the userscript manager can. When a
 // newer version exists we open the raw .user.js URL, which Tampermonkey/
-// Violentmonkey intercept to show their native install/update page.
+// Violentmonkey intercept to show their native install/update page. The whole
+// flow lives in the Settings panel (state below) so there are no browser popups.
 function openInstallPage() {
   if (typeof GM_openInTab === "function") { GM_openInTab(RAW_URL, { active: true }); return; }
   const w = window.open(RAW_URL, "_blank");
   if (!w) window.location.href = RAW_URL; // popup blocked — navigate instead
 }
 
+// idle | checking | current | available | error | opened
+let updateState = { state: "idle" };
+function setUpdateState(next) {
+  updateState = next;
+  if (settingsPanel) reopenSettings();
+}
+
 function checkUpdates() {
   if (typeof GM_xmlhttpRequest !== "function") {
-    alert("Popup Zapper: update check unavailable in this manager.");
+    setUpdateState({ state: "error" });
     return;
   }
+  setUpdateState({ state: "checking" });
   const decide = (remote) => {
     const plan = updatePlan(VERSION, remote);
-    if (plan.action === "install") {
-      if (confirm(plan.message)) openInstallPage();
-    } else {
-      alert("Popup Zapper: " + plan.message);
-    }
+    if (plan.action === "install") setUpdateState({ state: "available", remote: plan.remote });
+    else if (plan.action === "error") setUpdateState({ state: "error" });
+    else setUpdateState({ state: "current" });
   };
   GM_xmlhttpRequest({
     method: "GET",
@@ -295,6 +307,12 @@ function checkUpdates() {
     onerror: () => decide(null),
   });
 }
+
+function installUpdate() {
+  openInstallPage();
+  setUpdateState({ state: "opened", remote: updateState.remote });
+}
+function reloadPage() { location.reload(); }
 
 // ---- diagnostics ----
 function copyDiagnostics() {
@@ -337,7 +355,7 @@ let settingsPanel = null;
 function closeSettings() { if (settingsPanel) { settingsPanel.remove(); settingsPanel = null; } }
 function openSettings() {
   settingsPanel = createSettingsPanel({
-    library, hostname, version: VERSION,
+    library, hostname, version: VERSION, theme: getTheme(),
     onToggleRule: ({ rule, enabled }) => { rule.enabled = enabled; persist(); runOnce(); reopenSettings(); },
     onEditRule: ({ rule }) => {
       const next = prompt(`Edit rule value (matched by ${rule.type}):`, rule.value);
@@ -354,7 +372,11 @@ function openSettings() {
       library.global.push(rule); persist(); reopenSettings();
     },
     onToggleCleanup: (on) => { domainEntry().cleanup = on; persist(); if (on) runOnce(); },
+    onSetTheme: (mode) => { setV(THEME_KEY, setTheme(mode)); repaint(); },
+    update: updateState,
     onCheckUpdates: checkUpdates,
+    onInstallUpdate: installUpdate,
+    onReloadPage: reloadPage,
     onShowLog: toggleLog,
     onDiagnostics: copyDiagnostics,
     onClose: closeSettings,
@@ -407,6 +429,13 @@ function toggleMenu() {
   menuOpen = !menuOpen;
   if (!menuOpen) { closeSettings(); closeLog(); closeFilterPanel(); }
   refreshControl();
+}
+
+// Re-render every open piece of UI so a theme change takes effect at once.
+function repaint() {
+  refreshControl();
+  if (settingsPanel) reopenSettings();
+  if (logPanel) renderLogPanel();
 }
 
 // ---- GM menu commands (extension-menu fallback for the on-page menu) ----
