@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Popup Zapper
 // @namespace    https://github.com/EJR-of-Scrutopia/popup-zapper
-// @version      2.0.2
+// @version      2.0.3
 // @description  Remove login/consent/newsletter/paywall popups, reveal blurred/gated content, defeat reload traps, and learn popups by click.
 // @author       Param
 // @homepageURL  https://github.com/EJR-of-Scrutopia/popup-zapper
@@ -15,6 +15,7 @@
 // @grant        GM_registerMenuCommand
 // @grant        GM_setClipboard
 // @grant        GM_xmlhttpRequest
+// @grant        GM_openInTab
 // @grant        GM_info
 // @connect      *
 // @noframes
@@ -1018,11 +1019,20 @@ Blurred elements: ${blurred.length}`);
     }
     return 0;
   }
-  function updateMessage(current, remote) {
-    if (!remote) return "Couldn't check for updates (network blocked).";
-    const c = compareVersions(remote, current);
-    if (c > 0) return `v${remote} available \u2014 your userscript manager will install it.`;
-    return "Up to date \u2713";
+  function updatePlan(current, remote) {
+    if (!remote) {
+      return { action: "error", remote: null, message: "Couldn't check for updates (network blocked)." };
+    }
+    if (compareVersions(remote, current) > 0) {
+      return {
+        action: "install",
+        remote,
+        message: `Popup Zapper v${remote} is available (you have v${current}).
+
+Open the install page now? Your userscript manager will show an Update/Reinstall button \u2014 click it and you're done.`
+      };
+    }
+    return { action: "none", remote, message: "Up to date \u2713" };
   }
 
   // src/lib/ui.js
@@ -1637,16 +1647,33 @@ Blurred elements: ${blurred.length}`);
       }
     });
   }
+  function openInstallPage() {
+    if (typeof GM_openInTab === "function") {
+      GM_openInTab(RAW_URL, { active: true });
+      return;
+    }
+    const w = window.open(RAW_URL, "_blank");
+    if (!w) window.location.href = RAW_URL;
+  }
   function checkUpdates() {
     if (typeof GM_xmlhttpRequest !== "function") {
       alert("Popup Zapper: update check unavailable in this manager.");
       return;
     }
+    const decide = (remote) => {
+      const plan = updatePlan(VERSION, remote);
+      if (plan.action === "install") {
+        if (confirm(plan.message)) openInstallPage();
+      } else {
+        alert("Popup Zapper: " + plan.message);
+      }
+    };
     GM_xmlhttpRequest({
       method: "GET",
-      url: RAW_URL,
-      onload: (res) => alert("Popup Zapper: " + updateMessage(VERSION, parseVersion(res.responseText))),
-      onerror: () => alert("Popup Zapper: " + updateMessage(VERSION, null))
+      url: RAW_URL + "?t=" + Date.now(),
+      // cache-bust GitHub raw
+      onload: (res) => decide(parseVersion(res.responseText)),
+      onerror: () => decide(null)
     });
   }
   function copyDiagnostics() {
