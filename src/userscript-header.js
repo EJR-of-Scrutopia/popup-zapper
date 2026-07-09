@@ -18,6 +18,7 @@ export function buildHeader(version) {
 // @grant        GM_registerMenuCommand
 // @grant        GM_setClipboard
 // @grant        GM_xmlhttpRequest
+// @grant        GM_openInTab
 // @grant        GM_info
 // @connect      *
 // @noframes

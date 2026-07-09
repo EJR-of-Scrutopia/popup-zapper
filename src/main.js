@@ -11,7 +11,7 @@ import { extractCleanContent, buildCleanDocument } from "./lib/cleanfetch.js";
 import { createPicker } from "./lib/picker.js";
 import { createUndoStack } from "./lib/undo.js";
 import { revealDeep, hasResidualGating } from "./lib/reveal.js";
-import { parseVersion, updateMessage } from "./lib/updates.js";
+import { parseVersion, updatePlan } from "./lib/updates.js";
 import {
   createControlMenu, createSettingsPanel, createPickerToolbar,
   createActivityPanel, createFilterPanel, formatStatus,
@@ -266,16 +266,33 @@ function doRemovePaywall() {
 }
 
 // ---- update check ----
+// A userscript can't install itself; only the userscript manager can. When a
+// newer version exists we open the raw .user.js URL, which Tampermonkey/
+// Violentmonkey intercept to show their native install/update page.
+function openInstallPage() {
+  if (typeof GM_openInTab === "function") { GM_openInTab(RAW_URL, { active: true }); return; }
+  const w = window.open(RAW_URL, "_blank");
+  if (!w) window.location.href = RAW_URL; // popup blocked — navigate instead
+}
+
 function checkUpdates() {
   if (typeof GM_xmlhttpRequest !== "function") {
     alert("Popup Zapper: update check unavailable in this manager.");
     return;
   }
+  const decide = (remote) => {
+    const plan = updatePlan(VERSION, remote);
+    if (plan.action === "install") {
+      if (confirm(plan.message)) openInstallPage();
+    } else {
+      alert("Popup Zapper: " + plan.message);
+    }
+  };
   GM_xmlhttpRequest({
     method: "GET",
-    url: RAW_URL,
-    onload: (res) => alert("Popup Zapper: " + updateMessage(VERSION, parseVersion(res.responseText))),
-    onerror: () => alert("Popup Zapper: " + updateMessage(VERSION, null)),
+    url: RAW_URL + "?t=" + Date.now(), // cache-bust GitHub raw
+    onload: (res) => decide(parseVersion(res.responseText)),
+    onerror: () => decide(null),
   });
 }
 
