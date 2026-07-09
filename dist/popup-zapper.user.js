@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Popup Zapper
 // @namespace    https://github.com/EJR-of-Scrutopia/popup-zapper
-// @version      2.0.3
+// @version      2.0.4
 // @description  Remove login/consent/newsletter/paywall popups, reveal blurred/gated content, defeat reload traps, and learn popups by click.
 // @author       Param
 // @homepageURL  https://github.com/EJR-of-Scrutopia/popup-zapper
@@ -1054,8 +1054,21 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       return false;
     }
   }
+  var themeMode = "auto";
+  function setTheme(mode) {
+    themeMode = mode === "light" || mode === "dark" ? mode : "auto";
+    return themeMode;
+  }
+  function getTheme() {
+    return themeMode;
+  }
+  function isDark() {
+    if (themeMode === "dark") return true;
+    if (themeMode === "light") return false;
+    return prefersDark();
+  }
   function palette() {
-    return prefersDark() ? {
+    return isDark() ? {
       bg: "#1f1f22",
       fg: "#e8e8ea",
       sub: "#a2a2a8",
@@ -1164,7 +1177,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       textContent: hostname2 || "this site",
       style: `font-weight:bold;color:${t.fg};word-break:break-all;`
     }));
-    const toggle = tag("button", { textContent: enabled ? "On \u25CF" : "Off \u25CB" });
+    const toggle = tag("button", { textContent: enabled ? "On" : "Off" });
     toggle.setAttribute("data-act", "site");
     toggle.title = enabled ? "Turn off for this site" : "Turn on for this site";
     toggle.style.cssText = "border:0;border-radius:12px;padding:3px 10px;cursor:pointer;font-weight:bold;color:#fff;background:" + (enabled ? t.accent : t.danger);
@@ -1186,18 +1199,18 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       menu.appendChild(b);
       return b;
     };
-    item("block", "\u25CE Block a popup", onBlock);
-    item("paywall", "\u21EA Remove paywall", onRemovePaywall);
-    item("revert", "\u21A9 Revert last block", onRevert);
+    item("block", "\u{1F6AB}  Block a popup", onBlock);
+    item("paywall", "\u{1F513}  Remove paywall", onRemovePaywall);
+    item("revert", "\u21A9\uFE0F  Revert last block", onRevert);
     const strip = tag("div");
     strip.setAttribute("data-pz-status", "");
     strip.style.cssText = `padding:7px 12px;border-top:1px solid ${t.border};border-bottom:1px solid ${t.border};color:${t.sub};font:11px sans-serif;min-height:16px;background:${t.head};`;
     strip.textContent = status || "Ready.";
     menu.appendChild(strip);
     if (showReveal) {
-      item("reveal", "\u{1F50E} Still blocked? Reveal deeper", onReveal, prefersDark() ? "#e0a44a" : "#8a5a00");
+      item("reveal", "\u{1F50D}  Reveal hidden content", onReveal, isDark() ? "#e0a44a" : "#8a5a00");
     }
-    item("settings", "\u2699 Settings", onSettings);
+    item("settings", "\u2699\uFE0F  Settings", onSettings);
     wrap.appendChild(badge);
     wrap.appendChild(menu);
     return wrap;
@@ -1206,12 +1219,17 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     library: library2,
     hostname: hostname2,
     version,
+    theme,
+    update,
     onToggleRule,
     onEditRule,
     onDeleteRule,
     onPromoteRule,
     onToggleCleanup,
+    onSetTheme,
     onCheckUpdates,
+    onInstallUpdate,
+    onReloadPage,
     onShowLog,
     onDiagnostics,
     onClose
@@ -1248,7 +1266,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       cb.addEventListener("change", () => onToggleRule({ rule, scope, enabled: cb.checked }));
       row.appendChild(cb);
       row.appendChild(tag("span", {
-        textContent: `[${scope}] ${rule.type}: ${rule.value}`,
+        textContent: `${rule.type} \u201C${rule.value}\u201D \xB7 ${scope === "global" ? "all sites" : "this site"}`,
         style: "flex:1;word-break:break-all;color:" + (rule.enabled === false ? t.sub : t.fg)
       }));
       row.appendChild(btn("Edit", "edit-rule", () => onEditRule({ rule, scope })));
@@ -1275,11 +1293,50 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     cleanupRow.appendChild(cleanupCb);
     cleanupRow.appendChild(tag("span", { textContent: "Delete tracking cookies/storage on this site (can log you out)" }));
     panel.appendChild(cleanupRow);
+    if (onSetTheme) {
+      const themeRow = tag("div");
+      themeRow.style.cssText = `display:flex;gap:8px;align-items:center;margin:10px 0 4px;border-top:1px solid ${t.border};padding-top:8px;`;
+      themeRow.appendChild(tag("span", { textContent: "Appearance", style: `flex:1;color:${t.sub};` }));
+      const seg = tag("div");
+      seg.style.cssText = `display:flex;border:1px solid ${t.border};border-radius:6px;overflow:hidden;`;
+      const cur = theme || "auto";
+      [["auto", "Auto"], ["light", "Light"], ["dark", "Dark"]].forEach(([mode, label], i) => {
+        const on = cur === mode;
+        const b = tag("button", { textContent: label });
+        b.setAttribute("data-act", "theme-" + mode);
+        b.style.cssText = "border:0;padding:3px 10px;cursor:pointer;font:12px sans-serif;" + (i ? `border-left:1px solid ${t.border};` : "") + (on ? `background:${t.accent};color:#fff;font-weight:bold;` : `background:${t.head};color:${t.fg};`);
+        if (!on) b.addEventListener("click", () => onSetTheme(mode));
+        seg.appendChild(b);
+      });
+      themeRow.appendChild(seg);
+      panel.appendChild(themeRow);
+    }
+    const u = update || { state: "idle" };
     const verRow = tag("div");
     verRow.style.cssText = `display:flex;gap:8px;align-items:center;margin:10px 0 4px;border-top:1px solid ${t.border};padding-top:8px;`;
     verRow.appendChild(tag("span", { textContent: `Popup Zapper v${version}`, style: `flex:1;color:${t.sub};` }));
-    verRow.appendChild(btn("Check for updates", "check-updates", onCheckUpdates));
+    if (u.state === "available") {
+      verRow.appendChild(btn(`Update to v${u.remote}`, "install-update", onInstallUpdate));
+    } else if (u.state === "opened") {
+      verRow.appendChild(btn("\u21BB Reload to apply", "reload-page", onReloadPage));
+    } else {
+      verRow.appendChild(btn(
+        u.state === "checking" ? "Checking\u2026" : "Check for updates",
+        "check-updates",
+        u.state === "checking" ? null : onCheckUpdates
+      ));
+    }
     panel.appendChild(verRow);
+    const noteText = {
+      checking: "Checking for a new version\u2026",
+      current: "You're on the latest version \u2713",
+      error: "Couldn't check \u2014 network blocked.",
+      available: `Version ${u.remote} is ready to install.`,
+      opened: "Install page opened. Click Update/Reinstall there, then reload here."
+    }[u.state];
+    if (noteText) {
+      panel.appendChild(tag("div", { textContent: noteText, style: `color:${t.sub};font-size:12px;margin:2px 0 4px;` }));
+    }
     const dbg = tag("div");
     dbg.style.cssText = "display:flex;gap:8px;margin-top:8px;";
     dbg.appendChild(btn("\u{1F4DC} Activity log", "log", onShowLog));
@@ -1390,6 +1447,8 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
   var VERSION = typeof GM_info !== "undefined" && GM_info && GM_info.script ? GM_info.script.version : "0.0.0";
   var library = loadLibrary(getV);
   var persist = () => saveLibrary(setV, library);
+  var THEME_KEY = "pz-theme";
+  setTheme(getV(THEME_KEY) || "auto");
   var activityLog = createActivityLog();
   var undo = createUndoStack();
   function domainEntry() {
@@ -1655,18 +1714,22 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     const w = window.open(RAW_URL, "_blank");
     if (!w) window.location.href = RAW_URL;
   }
+  var updateState = { state: "idle" };
+  function setUpdateState(next) {
+    updateState = next;
+    if (settingsPanel) reopenSettings();
+  }
   function checkUpdates() {
     if (typeof GM_xmlhttpRequest !== "function") {
-      alert("Popup Zapper: update check unavailable in this manager.");
+      setUpdateState({ state: "error" });
       return;
     }
+    setUpdateState({ state: "checking" });
     const decide = (remote) => {
       const plan = updatePlan(VERSION, remote);
-      if (plan.action === "install") {
-        if (confirm(plan.message)) openInstallPage();
-      } else {
-        alert("Popup Zapper: " + plan.message);
-      }
+      if (plan.action === "install") setUpdateState({ state: "available", remote: plan.remote });
+      else if (plan.action === "error") setUpdateState({ state: "error" });
+      else setUpdateState({ state: "current" });
     };
     GM_xmlhttpRequest({
       method: "GET",
@@ -1675,6 +1738,13 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       onload: (res) => decide(parseVersion(res.responseText)),
       onerror: () => decide(null)
     });
+  }
+  function installUpdate() {
+    openInstallPage();
+    setUpdateState({ state: "opened", remote: updateState.remote });
+  }
+  function reloadPage() {
+    location.reload();
   }
   function copyDiagnostics() {
     const report = collectDiagnostics(document);
@@ -1732,6 +1802,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       library,
       hostname,
       version: VERSION,
+      theme: getTheme(),
       onToggleRule: ({ rule, enabled }) => {
         rule.enabled = enabled;
         persist();
@@ -1769,7 +1840,14 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
         persist();
         if (on) runOnce();
       },
+      onSetTheme: (mode) => {
+        setV(THEME_KEY, setTheme(mode));
+        repaint();
+      },
+      update: updateState,
       onCheckUpdates: checkUpdates,
+      onInstallUpdate: installUpdate,
+      onReloadPage: reloadPage,
       onShowLog: toggleLog,
       onDiagnostics: copyDiagnostics,
       onClose: closeSettings
@@ -1830,6 +1908,11 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       closeFilterPanel();
     }
     refreshControl();
+  }
+  function repaint() {
+    refreshControl();
+    if (settingsPanel) reopenSettings();
+    if (logPanel) renderLogPanel();
   }
   try {
     GM_registerMenuCommand("Block a popup", startBlock);
