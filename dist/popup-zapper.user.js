@@ -1037,12 +1037,76 @@ Blurred elements: ${blurred.length}`);
     el.setAttribute("data-pz", kind);
     return el;
   }
+  function prefersDark() {
+    try {
+      return !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    } catch {
+      return false;
+    }
+  }
+  function palette() {
+    return prefersDark() ? {
+      bg: "#1f1f22",
+      fg: "#e8e8ea",
+      sub: "#a2a2a8",
+      border: "#3a3a40",
+      hover: "#2c2c31",
+      head: "#26262b",
+      accent: "#4caf50",
+      danger: "#ff5c5c",
+      chip: "#2a2a30",
+      chipBorder: "#5a5a62",
+      field: "#2a2a30",
+      shadow: "0 2px 14px rgba(0,0,0,.6)"
+    } : {
+      bg: "#ffffff",
+      fg: "#141414",
+      sub: "#5f5f5f",
+      border: "#e2e2e2",
+      hover: "#f0f0f0",
+      head: "#f6f6f6",
+      accent: "#2e7d32",
+      danger: "#c62828",
+      chip: "#ffffff",
+      chipBorder: "#bcbcbc",
+      field: "#ffffff",
+      shadow: "0 2px 12px rgba(0,0,0,.28)"
+    };
+  }
+  function formatStatus(action, detail) {
+    switch (action) {
+      case "popup":
+        return "Blocked a popup";
+      case "autozap":
+        return "Removed an overlay";
+      case "paywall":
+        return "Removed a paywall veil";
+      case "deblur":
+        return "Un-blurred the page";
+      case "consent":
+        return "Dismissed a cookie banner";
+      case "reload":
+        return "Blocked an auto-reload";
+      case "meter":
+        return "Reset the paywall meter";
+      case "unlock":
+        return "Unlocked gated content";
+      case "keep":
+        return "Restored saved content";
+      case "freeze":
+        return "Found a paywall vendor to block";
+      default:
+        return detail || action;
+    }
+  }
   function createControlMenu({
     enabled,
     hostname: hostname2,
     open,
     status,
     showReveal,
+    blocked,
+    onToggleMenu,
     onToggleSite,
     onBlock,
     onRemovePaywall,
@@ -1050,42 +1114,50 @@ Blurred elements: ${blurred.length}`);
     onReveal,
     onSettings
   }) {
+    const t = palette();
     const wrap = own(tag("div", { className: PREFIX2 + "control" }), "control");
     wrap.style.cssText = "position:fixed;bottom:12px;right:12px;z-index:2147483647;font:12px sans-serif;";
     const badge = tag("button");
     badge.setAttribute("data-act", "menu");
     badge.title = enabled ? "Popup Zapper: on \u2014 click for menu" : "Popup Zapper: off \u2014 click for menu";
-    badge.style.cssText = "display:flex;align-items:center;gap:6px;border:0;background:transparent;cursor:pointer;padding:4px 6px;color:#fff;font:bold 13px sans-serif;line-height:1;mix-blend-mode:difference;-webkit-mix-blend-mode:difference;";
+    badge.style.cssText = `position:relative;display:flex;align-items:center;gap:6px;cursor:pointer;padding:5px 10px;border-radius:16px;font:bold 13px sans-serif;line-height:1;background:${t.chip};color:${t.fg};border:1.5px solid ${t.chipBorder};box-shadow:${t.shadow};`;
     const icon = tag("span");
-    icon.style.cssText = "display:flex;flex:0 0 auto;";
+    icon.style.cssText = `display:flex;flex:0 0 auto;color:${enabled ? t.fg : t.sub};`;
     const strike = enabled ? "" : '<line x1="3" y1="3" x2="21" y2="21" stroke="currentColor" stroke-width="2.5"/>';
     icon.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7 2v11h3v9l7-12h-4l4-8z"/>' + strike + "</svg>";
     const name = tag("span", { textContent: "Popup Zapper" });
-    name.style.cssText = "max-width:0;overflow:hidden;white-space:nowrap;opacity:0;transition:max-width .25s ease,opacity .25s ease;";
+    name.style.cssText = "overflow:hidden;white-space:nowrap;transition:max-width .25s ease,opacity .25s ease;" + (open ? "max-width:140px;opacity:1;" : "max-width:0;opacity:0;");
+    const dot = tag("span");
+    dot.setAttribute("data-pz-dot", "");
+    dot.style.cssText = `position:absolute;top:-3px;right:-3px;width:9px;height:9px;border-radius:50%;background:${t.danger};border:1.5px solid ${t.chip};display:${blocked ? "block" : "none"};`;
     badge.appendChild(icon);
     badge.appendChild(name);
-    badge.addEventListener("mouseenter", () => {
-      name.style.maxWidth = "130px";
-      name.style.opacity = "1";
-    });
-    badge.addEventListener("mouseleave", () => {
-      name.style.maxWidth = "0";
-      name.style.opacity = "0";
-    });
+    badge.appendChild(dot);
+    if (!open) {
+      badge.addEventListener("mouseenter", () => {
+        name.style.maxWidth = "140px";
+        name.style.opacity = "1";
+      });
+      badge.addEventListener("mouseleave", () => {
+        name.style.maxWidth = "0";
+        name.style.opacity = "0";
+      });
+    }
+    if (onToggleMenu) badge.addEventListener("click", onToggleMenu);
     const menu = tag("div");
-    menu.style.cssText = `display:${open ? "block" : "none"};position:absolute;bottom:34px;right:0;background:#fff;color:#111;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,.3);overflow:hidden;min-width:240px;`;
+    menu.style.cssText = `display:${open ? "block" : "none"};position:absolute;bottom:42px;right:0;background:${t.bg};color:${t.fg};border:1px solid ${t.border};border-radius:8px;box-shadow:${t.shadow};overflow:hidden;min-width:240px;`;
     const header = tag("div");
-    header.style.cssText = "padding:8px 12px;background:#f6f6f6;border-bottom:1px solid #e0e0e0;";
+    header.style.cssText = `padding:8px 12px;background:${t.head};border-bottom:1px solid ${t.border};`;
     const hRow = tag("div");
     hRow.style.cssText = "display:flex;justify-content:space-between;align-items:center;gap:8px;";
     hRow.appendChild(tag("span", {
       textContent: hostname2 || "this site",
-      style: "font-weight:bold;color:#333;word-break:break-all;"
+      style: `font-weight:bold;color:${t.fg};word-break:break-all;`
     }));
     const toggle = tag("button", { textContent: enabled ? "On \u25CF" : "Off \u25CB" });
     toggle.setAttribute("data-act", "site");
     toggle.title = enabled ? "Turn off for this site" : "Turn on for this site";
-    toggle.style.cssText = "border:0;border-radius:12px;padding:3px 10px;cursor:pointer;font-weight:bold;color:#fff;background:" + (enabled ? "#2e7d32" : "#b00020");
+    toggle.style.cssText = "border:0;border-radius:12px;padding:3px 10px;cursor:pointer;font-weight:bold;color:#fff;background:" + (enabled ? t.accent : t.danger);
     toggle.addEventListener("click", onToggleSite);
     hRow.appendChild(toggle);
     header.appendChild(hRow);
@@ -1093,12 +1165,12 @@ Blurred elements: ${blurred.length}`);
     const item = (act, label, handler, accent) => {
       const b = tag("button", { textContent: label });
       b.setAttribute("data-act", act);
-      b.style.cssText = `display:block;width:100%;text-align:left;padding:9px 12px;border:0;background:#fff;color:${accent || "#111"};cursor:pointer;font:12px sans-serif;`;
+      b.style.cssText = `display:block;width:100%;text-align:left;padding:9px 12px;border:0;background:${t.bg};color:${accent || t.fg};cursor:pointer;font:12px sans-serif;`;
       b.addEventListener("mouseenter", () => {
-        b.style.background = "#f0f0f0";
+        b.style.background = t.hover;
       });
       b.addEventListener("mouseleave", () => {
-        b.style.background = "#fff";
+        b.style.background = t.bg;
       });
       if (handler) b.addEventListener("click", handler);
       menu.appendChild(b);
@@ -1109,16 +1181,13 @@ Blurred elements: ${blurred.length}`);
     item("revert", "\u21A9 Revert last block", onRevert);
     const strip = tag("div");
     strip.setAttribute("data-pz-status", "");
-    strip.style.cssText = "padding:7px 12px;border-top:1px solid #eee;border-bottom:1px solid #eee;color:#555;font:11px sans-serif;min-height:16px;background:#fafafa;";
+    strip.style.cssText = `padding:7px 12px;border-top:1px solid ${t.border};border-bottom:1px solid ${t.border};color:${t.sub};font:11px sans-serif;min-height:16px;background:${t.head};`;
     strip.textContent = status || "Ready.";
     menu.appendChild(strip);
     if (showReveal) {
-      item("reveal", "\u{1F50E} Still blocked? Reveal deeper", onReveal, "#8a5a00");
+      item("reveal", "\u{1F50E} Still blocked? Reveal deeper", onReveal, prefersDark() ? "#e0a44a" : "#8a5a00");
     }
     item("settings", "\u2699 Settings", onSettings);
-    badge.addEventListener("click", () => {
-      menu.style.display = menu.style.display === "none" ? "block" : "none";
-    });
     wrap.appendChild(badge);
     wrap.appendChild(menu);
     return wrap;
@@ -1137,20 +1206,29 @@ Blurred elements: ${blurred.length}`);
     onDiagnostics,
     onClose
   }) {
+    const t = palette();
     const panel = own(tag("div", { className: PREFIX2 + "settings" }), "settings");
-    panel.style.cssText = "position:fixed;top:40px;right:12px;z-index:2147483647;background:#fff;color:#111;padding:12px;border-radius:8px;font:13px sans-serif;max-height:74vh;overflow:auto;box-shadow:0 2px 12px rgba(0,0,0,.3);min-width:300px;max-width:92vw;";
+    panel.style.cssText = `position:fixed;top:40px;right:12px;z-index:2147483647;background:${t.bg};color:${t.fg};padding:12px;border:1px solid ${t.border};border-radius:8px;font:13px sans-serif;max-height:74vh;overflow:auto;box-shadow:${t.shadow};min-width:300px;max-width:92vw;`;
+    const btn = (label, act, handler) => {
+      const b = tag("button", { textContent: label });
+      b.setAttribute("data-act", act);
+      b.style.cssText = `border:1px solid ${t.border};background:${t.head};color:${t.fg};border-radius:5px;padding:3px 8px;cursor:pointer;font:12px sans-serif;`;
+      if (handler) b.addEventListener("click", handler);
+      return b;
+    };
     const head = tag("div");
     head.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;";
     head.appendChild(tag("strong", { textContent: "\u2699 Settings" }));
     const cls = tag("button", { textContent: "\u2715" });
     cls.setAttribute("data-act", "close");
-    cls.style.cssText = "border:0;background:none;font-size:16px;cursor:pointer;";
+    cls.title = "Close";
+    cls.style.cssText = `border:0;background:none;color:${t.fg};font-size:16px;line-height:1;cursor:pointer;`;
     cls.addEventListener("click", onClose);
     head.appendChild(cls);
     panel.appendChild(head);
     panel.appendChild(tag("div", {
       textContent: "What's blocked on this site",
-      style: "font-weight:bold;color:#333;margin:6px 0 4px;"
+      style: `font-weight:bold;color:${t.fg};margin:6px 0 4px;`
     }));
     const addRule = (rule, scope) => {
       const row = tag("div");
@@ -1161,22 +1239,11 @@ Blurred elements: ${blurred.length}`);
       row.appendChild(cb);
       row.appendChild(tag("span", {
         textContent: `[${scope}] ${rule.type}: ${rule.value}`,
-        style: "flex:1;word-break:break-all;color:" + (rule.enabled === false ? "#999" : "#111")
+        style: "flex:1;word-break:break-all;color:" + (rule.enabled === false ? t.sub : t.fg)
       }));
-      const edit = tag("button", { textContent: "Edit" });
-      edit.setAttribute("data-act", "edit-rule");
-      edit.addEventListener("click", () => onEditRule({ rule, scope }));
-      row.appendChild(edit);
-      const del = tag("button", { textContent: "Delete" });
-      del.setAttribute("data-act", "delete-rule");
-      del.addEventListener("click", () => onDeleteRule({ rule, scope }));
-      row.appendChild(del);
-      if (scope === "site") {
-        const prom = tag("button", { textContent: "Make global" });
-        prom.setAttribute("data-act", "promote-rule");
-        prom.addEventListener("click", () => onPromoteRule({ rule }));
-        row.appendChild(prom);
-      }
+      row.appendChild(btn("Edit", "edit-rule", () => onEditRule({ rule, scope })));
+      row.appendChild(btn("Delete", "delete-rule", () => onDeleteRule({ rule, scope })));
+      if (scope === "site") row.appendChild(btn("Make global", "promote-rule", () => onPromoteRule({ rule })));
       panel.appendChild(row);
     };
     const globals = library2.global || [];
@@ -1185,13 +1252,13 @@ Blurred elements: ${blurred.length}`);
     if (!globals.length && !siteRules.length) {
       panel.appendChild(tag("div", {
         textContent: "No rules yet. Use \u201CBlock a popup\u201D to add one.",
-        style: "color:#888;margin:2px 0 6px;"
+        style: `color:${t.sub};margin:2px 0 6px;`
       }));
     }
     for (const r of globals) addRule(r, "global");
     for (const r of siteRules) addRule(r, "site");
     const cleanupRow = tag("label");
-    cleanupRow.style.cssText = "display:flex;gap:6px;align-items:center;margin:10px 0 4px;border-top:1px solid #eee;padding-top:8px;";
+    cleanupRow.style.cssText = `display:flex;gap:6px;align-items:center;margin:10px 0 4px;border-top:1px solid ${t.border};padding-top:8px;`;
     const cleanupCb = tag("input", { type: "checkbox", checked: dom.cleanup === true });
     cleanupCb.setAttribute("data-act", "toggle-cleanup");
     cleanupCb.addEventListener("change", () => onToggleCleanup(cleanupCb.checked));
@@ -1199,77 +1266,69 @@ Blurred elements: ${blurred.length}`);
     cleanupRow.appendChild(tag("span", { textContent: "Delete tracking cookies/storage on this site (can log you out)" }));
     panel.appendChild(cleanupRow);
     const verRow = tag("div");
-    verRow.style.cssText = "display:flex;gap:8px;align-items:center;margin:10px 0 4px;border-top:1px solid #eee;padding-top:8px;";
-    verRow.appendChild(tag("span", { textContent: `Popup Zapper v${version}`, style: "flex:1;color:#333;" }));
-    const upd = tag("button", { textContent: "Check for updates" });
-    upd.setAttribute("data-act", "check-updates");
-    upd.addEventListener("click", onCheckUpdates);
-    verRow.appendChild(upd);
+    verRow.style.cssText = `display:flex;gap:8px;align-items:center;margin:10px 0 4px;border-top:1px solid ${t.border};padding-top:8px;`;
+    verRow.appendChild(tag("span", { textContent: `Popup Zapper v${version}`, style: `flex:1;color:${t.sub};` }));
+    verRow.appendChild(btn("Check for updates", "check-updates", onCheckUpdates));
     panel.appendChild(verRow);
     const dbg = tag("div");
     dbg.style.cssText = "display:flex;gap:8px;margin-top:8px;";
-    const logBtn = tag("button", { textContent: "\u{1F4DC} Activity log" });
-    logBtn.setAttribute("data-act", "log");
-    logBtn.addEventListener("click", onShowLog);
-    dbg.appendChild(logBtn);
-    if (onDiagnostics) {
-      const diagBtn = tag("button", { textContent: "\u{1F527} Copy diagnostics" });
-      diagBtn.setAttribute("data-act", "diag");
-      diagBtn.addEventListener("click", onDiagnostics);
-      dbg.appendChild(diagBtn);
-    }
+    dbg.appendChild(btn("\u{1F4DC} Activity log", "log", onShowLog));
+    if (onDiagnostics) dbg.appendChild(btn("\u{1F527} Copy diagnostics", "diag", onDiagnostics));
     panel.appendChild(dbg);
     return panel;
   }
   function createPickerToolbar({ onPrev, onNext, onGrow, onShrink, onBlock, onCancel }) {
-    const mk = (act, label, handler, title) => {
+    const t = palette();
+    const mk = (act, label, handler, title, primary) => {
       const b = tag("button", { textContent: label, title: title || label });
       b.setAttribute("data-act", act);
-      b.style.cssText = "margin:0 3px;padding:4px 9px;font:13px sans-serif;cursor:pointer;border-radius:4px;border:0;";
+      b.style.cssText = "margin:0 3px;padding:4px 9px;font:13px sans-serif;cursor:pointer;border-radius:4px;border:0;" + (primary ? "background:#2e7d32;color:#fff;font-weight:bold;" : "background:#f0f0f0;color:#111;");
       b.addEventListener("click", handler);
       return b;
     };
     const bar = own(tag("div", { className: PREFIX2 + "picker" }), "picker");
-    bar.style.cssText = "position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2147483647;background:#222;color:#fff;padding:8px 12px;border-radius:8px;font:13px sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.4);display:flex;align-items:center;";
+    bar.style.cssText = `position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2147483647;background:${t.bg};color:${t.fg};padding:8px 12px;border:1px solid ${t.border};border-radius:8px;font:13px sans-serif;box-shadow:${t.shadow};display:flex;align-items:center;`;
     bar.appendChild(tag("span", { textContent: "Pick the popup: ", style: "margin-right:6px" }));
     bar.appendChild(mk("prev", "\u25C0", onPrev, "Previous candidate"));
     bar.appendChild(mk("next", "\u25B6", onNext, "Next candidate"));
     bar.appendChild(mk("grow", "\u25B2", onGrow, "Select parent ( [ )"));
     bar.appendChild(mk("shrink", "\u25BC", onShrink, "Select child ( ] )"));
-    const applyAll = tag("label", { style: "margin:0 8px;font:12px sans-serif;" });
+    const applyAll = tag("label", { style: "margin:0 8px;font:12px sans-serif;display:flex;align-items:center;gap:4px;" });
     const allCb = tag("input", { type: "checkbox" });
     allCb.setAttribute("data-act", "all-sites");
     applyAll.appendChild(allCb);
-    applyAll.appendChild(tag("span", { textContent: " all sites" }));
+    applyAll.appendChild(tag("span", { textContent: "all sites" }));
     bar.appendChild(applyAll);
-    bar.appendChild(mk("block", "\u2713 Block", () => onBlock(allCb.checked), "Block this element"));
+    bar.appendChild(mk("block", "\u2713 Block", () => onBlock(allCb.checked), "Block this element", true));
     bar.appendChild(mk("cancel", "Cancel", onCancel));
     return bar;
   }
   function createFilterPanel({ filters, hosts, copied, onClose }) {
+    const t = palette();
     const panel = own(tag("div", { className: PREFIX2 + "filters" }), "filters");
-    panel.style.cssText = "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:2147483647;background:#fff;color:#111;padding:16px;border-radius:10px;width:440px;max-width:92vw;font:13px sans-serif;box-shadow:0 4px 24px rgba(0,0,0,.5);";
+    panel.style.cssText = `position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:2147483647;background:${t.bg};color:${t.fg};padding:16px;border:1px solid ${t.border};border-radius:10px;width:440px;max-width:92vw;font:13px sans-serif;box-shadow:${t.shadow};`;
     const head = tag("div");
     head.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;";
     head.appendChild(tag("strong", { textContent: "\u{1F9CA} Block this paywall permanently" }));
     const cls = tag("button", { textContent: "\u2715" });
     cls.setAttribute("data-act", "close");
-    cls.style.cssText = "border:0;background:none;font-size:16px;cursor:pointer;";
+    cls.title = "Close";
+    cls.style.cssText = `border:0;background:none;color:${t.fg};font-size:16px;line-height:1;cursor:pointer;`;
     cls.addEventListener("click", onClose);
     head.appendChild(cls);
     panel.appendChild(head);
     panel.appendChild(tag("div", {
       textContent: `Found ${hosts.length} paywall/metering host(s) on this page${copied ? " \u2014 copied to your clipboard." : "."}`,
-      style: "margin-bottom:8px;color:#333;"
+      style: `margin-bottom:8px;color:${t.sub};`
     }));
     const area = tag("textarea");
     area.value = filters;
     area.readOnly = true;
-    area.style.cssText = "width:100%;height:96px;font:12px monospace;box-sizing:border-box;border:1px solid #ccc;border-radius:6px;padding:8px;resize:vertical;";
+    area.style.cssText = `width:100%;height:96px;font:12px monospace;box-sizing:border-box;border:1px solid ${t.border};border-radius:6px;padding:8px;resize:vertical;background:${t.field};color:${t.fg};`;
     area.addEventListener("focus", () => area.select());
     panel.appendChild(area);
     const steps = tag("ol");
-    steps.style.cssText = "margin:10px 0 0 0;padding-left:20px;color:#333;line-height:1.6;";
+    steps.style.cssText = `margin:10px 0 0 0;padding-left:20px;color:${t.sub};line-height:1.6;`;
     for (const s of [
       "Open uBlock Origin \u2192 Dashboard (the gears icon).",
       'Go to the "My filters" tab.',
@@ -1280,28 +1339,28 @@ Blurred elements: ${blurred.length}`);
     return panel;
   }
   function createActivityPanel({ entries, onClear, onClose }) {
+    const t = palette();
     const panel = own(tag("div", { className: PREFIX2 + "log" }), "log");
-    panel.style.cssText = "position:fixed;bottom:54px;right:12px;z-index:2147483647;background:#111;color:#eee;padding:10px;border-radius:8px;font:11px/1.5 monospace;max-height:50vh;width:340px;overflow:auto;box-shadow:0 2px 12px rgba(0,0,0,.5);";
+    panel.style.cssText = `position:fixed;bottom:54px;right:12px;z-index:2147483647;background:${t.bg};color:${t.fg};padding:10px;border:1px solid ${t.border};border-radius:8px;font:11px/1.5 monospace;max-height:50vh;width:340px;overflow:auto;box-shadow:${t.shadow};`;
     const head = tag("div");
     head.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;";
-    head.appendChild(tag("strong", { textContent: "Activity", style: "color:#fff" }));
+    head.appendChild(tag("strong", { textContent: "Activity", style: `color:${t.fg}` }));
     const btns = tag("div");
-    const clr = tag("button", { textContent: "Clear" });
-    clr.setAttribute("data-act", "clear");
-    clr.style.cssText = "margin-left:6px;cursor:pointer;font:11px monospace;";
-    clr.addEventListener("click", onClear);
-    const cls = tag("button", { textContent: "\u2715" });
-    cls.setAttribute("data-act", "close");
-    cls.style.cssText = "margin-left:6px;cursor:pointer;font:11px monospace;";
-    cls.addEventListener("click", onClose);
-    btns.appendChild(clr);
-    btns.appendChild(cls);
+    const mkBtn = (label, act, handler) => {
+      const b = tag("button", { textContent: label });
+      b.setAttribute("data-act", act);
+      b.style.cssText = `margin-left:6px;cursor:pointer;font:11px monospace;background:${t.head};color:${t.fg};border:1px solid ${t.border};border-radius:4px;padding:2px 6px;`;
+      b.addEventListener("click", handler);
+      return b;
+    };
+    btns.appendChild(mkBtn("Clear", "clear", onClear));
+    btns.appendChild(mkBtn("\u2715", "close", onClose));
     head.appendChild(btns);
     panel.appendChild(head);
     if (!entries || entries.length === 0) {
       panel.appendChild(tag("div", {
         textContent: "Nothing yet on this page. If a popup is here, use Block a popup.",
-        style: "color:#aaa"
+        style: `color:${t.sub}`
       }));
     } else {
       for (const e of entries) {
@@ -1337,12 +1396,21 @@ Blurred elements: ${blurred.length}`);
     const strip = control && control.querySelector("[data-pz-status]");
     if (strip) strip.textContent = msg;
   }
+  var BLOCK_ACTIONS = /* @__PURE__ */ new Set(["popup", "autozap", "paywall", "unlock"]);
+  function pageBlocked() {
+    return activityLog.entries().some((e) => BLOCK_ACTIONS.has(e.action));
+  }
+  function updateBadgeDot() {
+    const dot = control && control.querySelector("[data-pz-dot]");
+    if (dot) dot.style.display = pageBlocked() ? "block" : "none";
+  }
   activityLog.subscribe(() => {
     const es = activityLog.entries();
     if (es.length) {
       const e = es[es.length - 1];
-      setStatus(`${e.action}: ${e.detail}`);
+      setStatus(formatStatus(e.action, e.detail));
     }
+    updateBadgeDot();
   });
   var lastInteraction = 0;
   for (const ev of ["click", "keydown", "submit", "pointerdown"]) {
@@ -1498,6 +1566,12 @@ Blurred elements: ${blurred.length}`);
     refreshControl();
   }
   var filterPanel = null;
+  function closeFilterPanel() {
+    if (filterPanel) {
+      filterPanel.remove();
+      filterPanel = null;
+    }
+  }
   function offerFreeze() {
     const hosts = findPaywallHosts(document, window.performance);
     if (!hosts.length) {
@@ -1511,18 +1585,8 @@ Blurred elements: ${blurred.length}`);
       copied = true;
     } catch {
     }
-    if (filterPanel) filterPanel.remove();
-    filterPanel = createFilterPanel({
-      filters,
-      hosts,
-      copied,
-      onClose: () => {
-        if (filterPanel) {
-          filterPanel.remove();
-          filterPanel = null;
-        }
-      }
-    });
+    closeFilterPanel();
+    filterPanel = createFilterPanel({ filters, hosts, copied, onClose: closeFilterPanel });
     document.body.appendChild(filterPanel);
   }
   function doRemovePaywall() {
@@ -1700,10 +1764,11 @@ Blurred elements: ${blurred.length}`);
     persist();
     const enabled = !library.disabledDomains.includes(hostname);
     activityLog.add("site", enabled ? "enabled on this site" : "disabled on this site");
-    refreshControl(true);
+    refreshControl();
     if (enabled) runOnce();
   }
   var control = null;
+  var menuOpen = false;
   function safeResidual() {
     try {
       return hasResidualGating(document);
@@ -1711,14 +1776,16 @@ Blurred elements: ${blurred.length}`);
       return false;
     }
   }
-  function refreshControl(open) {
+  function refreshControl() {
     if (control) control.remove();
     control = createControlMenu({
       enabled: !library.disabledDomains.includes(hostname),
       hostname,
-      open: !!open,
+      open: menuOpen,
       status: lastStatus,
       showReveal: safeResidual(),
+      blocked: pageBlocked(),
+      onToggleMenu: toggleMenu,
       onToggleSite: toggleSite,
       onBlock: startBlock,
       onRemovePaywall: doRemovePaywall,
@@ -1727,6 +1794,15 @@ Blurred elements: ${blurred.length}`);
       onSettings: toggleSettings
     });
     document.body.appendChild(control);
+  }
+  function toggleMenu() {
+    menuOpen = !menuOpen;
+    if (!menuOpen) {
+      closeSettings();
+      closeLog();
+      closeFilterPanel();
+    }
+    refreshControl();
   }
   try {
     GM_registerMenuCommand("Block a popup", startBlock);

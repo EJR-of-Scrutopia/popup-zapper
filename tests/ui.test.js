@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   createControlMenu, createSettingsPanel, createPickerToolbar, createActivityPanel,
+  formatStatus,
 } from "../src/lib/ui.js";
 
 beforeEach(() => { document.body.innerHTML = ""; });
@@ -50,17 +51,47 @@ describe("createControlMenu", () => {
     expect(onReveal).toHaveBeenCalledOnce();
   });
 
-  it("badge is a monochrome zap that expands to the name, with state in the title", () => {
-    const mk = (enabled) => createControlMenu({
-      enabled, hostname: "x.com", open: false, status: "",
-      onToggleSite() {}, onBlock() {}, onRemovePaywall() {}, onRevert() {}, onReveal() {}, onSettings() {},
+  it("badge is a bordered zap chip that expands to the name, with state in the title", () => {
+    const mk = (enabled, blocked) => createControlMenu({
+      enabled, blocked, hostname: "x.com", open: false, status: "",
+      onToggleMenu() {}, onToggleSite() {}, onBlock() {}, onRemovePaywall() {}, onRevert() {}, onReveal() {}, onSettings() {},
     });
-    const on = mk(true).querySelector("[data-act='menu']");
-    expect(on.querySelector("svg")).not.toBeNull();       // zap icon present
-    expect(on.textContent).toContain("Popup Zapper");      // name (hidden until hover)
-    expect(on.style.mixBlendMode).toBe("difference");      // adapts to background
+    const on = mk(true, false).querySelector("[data-act='menu']");
+    expect(on.querySelector("svg")).not.toBeNull();          // zap icon present
+    expect(on.textContent).toContain("Popup Zapper");         // name (hidden until hover)
+    expect(on.style.border).toMatch(/solid/);                 // visible border
     expect(on.title).toMatch(/on/i);
-    expect(mk(false).querySelector("[data-act='menu']").title).toMatch(/off/i);
+    expect(mk(false, false).querySelector("[data-act='menu']").title).toMatch(/off/i);
+  });
+
+  it("fires onToggleMenu when the badge is clicked", () => {
+    const onToggleMenu = vi.fn();
+    const ctrl = createControlMenu({
+      enabled: true, hostname: "x.com", open: false, status: "", showReveal: false,
+      onToggleMenu, onToggleSite() {}, onBlock() {}, onRemovePaywall() {}, onRevert() {}, onReveal() {}, onSettings() {},
+    });
+    ctrl.querySelector("[data-act='menu']").click();
+    expect(onToggleMenu).toHaveBeenCalledOnce();
+  });
+
+  it("shows the red blocked-dot only when blocked is true", () => {
+    const mk = (blocked) => createControlMenu({
+      enabled: true, blocked, hostname: "x.com", open: false, status: "",
+      onToggleMenu() {}, onToggleSite() {}, onBlock() {}, onRemovePaywall() {}, onRevert() {}, onReveal() {}, onSettings() {},
+    });
+    expect(mk(true).querySelector("[data-pz-dot]").style.display).toBe("block");
+    expect(mk(false).querySelector("[data-pz-dot]").style.display).toBe("none");
+  });
+});
+
+describe("formatStatus", () => {
+  it("maps raw log actions to friendly phrases", () => {
+    expect(formatStatus("popup", "removed div.modal (matched rule)")).toBe("Blocked a popup");
+    expect(formatStatus("paywall", "removed 1 veil overlay(s): .piano-meter")).toBe("Removed a paywall veil");
+    expect(formatStatus("deblur", "removed blur from 3 element(s)")).toBe("Un-blurred the page");
+  });
+  it("falls back to the detail for unknown actions", () => {
+    expect(formatStatus("mystery", "something happened")).toBe("something happened");
   });
 });
 

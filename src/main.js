@@ -14,7 +14,7 @@ import { revealDeep, hasResidualGating } from "./lib/reveal.js";
 import { parseVersion, updateMessage } from "./lib/updates.js";
 import {
   createControlMenu, createSettingsPanel, createPickerToolbar,
-  createActivityPanel, createFilterPanel,
+  createActivityPanel, createFilterPanel, formatStatus,
 } from "./lib/ui.js";
 
 const getV = (k) => GM_getValue(k);
@@ -39,7 +39,7 @@ function describeEl(el) {
   return `${el.tagName.toLowerCase()}${id}${cls}`;
 }
 
-// ---- status strip ----
+// ---- status strip + blocked indicator ----
 // The badge menu shows the last thing the zapper did, so it's clear something
 // happened. Updated in place (no menu reopen) and also mirrored from the log.
 let lastStatus = "Ready.";
@@ -48,12 +48,25 @@ function setStatus(msg) {
   const strip = control && control.querySelector("[data-pz-status]");
   if (strip) strip.textContent = msg;
 }
+
+// The red dot appears once the zapper has actually removed a popup/overlay/gate
+// on this page (not for ambient things like cookie-reject or de-blur alone).
+const BLOCK_ACTIONS = new Set(["popup", "autozap", "paywall", "unlock"]);
+function pageBlocked() {
+  return activityLog.entries().some((e) => BLOCK_ACTIONS.has(e.action));
+}
+function updateBadgeDot() {
+  const dot = control && control.querySelector("[data-pz-dot]");
+  if (dot) dot.style.display = pageBlocked() ? "block" : "none";
+}
+
 activityLog.subscribe(() => {
   const es = activityLog.entries();
   if (es.length) {
     const e = es[es.length - 1];
-    setStatus(`${e.action}: ${e.detail}`);
+    setStatus(formatStatus(e.action, e.detail));
   }
+  updateBadgeDot();
 });
 
 // ---- interaction tracking for the reload guard ----
@@ -200,17 +213,15 @@ function doReveal() {
 
 // ---- Remove paywall: un-gate in place, then open a clean copy in a new tab ----
 let filterPanel = null;
+function closeFilterPanel() { if (filterPanel) { filterPanel.remove(); filterPanel = null; } }
 function offerFreeze() {
   const hosts = findPaywallHosts(document, window.performance);
   if (!hosts.length) { setStatus("No known paywall vendor detected to block"); return; }
   const filters = buildUblockFilters(hosts);
   let copied = false;
   try { GM_setClipboard(filters); copied = true; } catch { /* not granted */ }
-  if (filterPanel) filterPanel.remove();
-  filterPanel = createFilterPanel({
-    filters, hosts, copied,
-    onClose: () => { if (filterPanel) { filterPanel.remove(); filterPanel = null; } },
-  });
+  closeFilterPanel();
+  filterPanel = createFilterPanel({ filters, hosts, copied, onClose: closeFilterPanel });
   document.body.appendChild(filterPanel);
 }
 
@@ -344,21 +355,24 @@ function toggleSite() {
   persist();
   const enabled = !library.disabledDomains.includes(hostname);
   activityLog.add("site", enabled ? "enabled on this site" : "disabled on this site");
-  refreshControl(true);
+  refreshControl();
   if (enabled) runOnce();
 }
 
 // ---- control menu ----
 let control = null;
+let menuOpen = false;
 function safeResidual() { try { return hasResidualGating(document); } catch { return false; } }
-function refreshControl(open) {
+function refreshControl() {
   if (control) control.remove();
   control = createControlMenu({
     enabled: !library.disabledDomains.includes(hostname),
     hostname,
-    open: !!open,
+    open: menuOpen,
     status: lastStatus,
     showReveal: safeResidual(),
+    blocked: pageBlocked(),
+    onToggleMenu: toggleMenu,
     onToggleSite: toggleSite,
     onBlock: startBlock,
     onRemovePaywall: doRemovePaywall,
@@ -367,6 +381,15 @@ function refreshControl(open) {
     onSettings: toggleSettings,
   });
   document.body.appendChild(control);
+}
+
+// Clicking the badge toggles the menu open/closed. Closing it also dismisses any
+// panels it spawned (settings, activity log, paywall filters), so one click tidies
+// everything away.
+function toggleMenu() {
+  menuOpen = !menuOpen;
+  if (!menuOpen) { closeSettings(); closeLog(); closeFilterPanel(); }
+  refreshControl();
 }
 
 // ---- GM menu commands (extension-menu fallback for the on-page menu) ----
