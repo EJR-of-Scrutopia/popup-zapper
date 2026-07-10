@@ -12,4 +12,13 @@ describe("buildHeader", () => {
   it("has no unreplaced placeholder", () => {
     expect(buildHeader("2.0.0")).not.toContain("__VERSION__");
   });
+  it("grants both underscore and dotted GM APIs for cross-manager support", () => {
+    const header = buildHeader("9.9.9");
+    expect(header).toContain("// @grant        GM.setValue");
+    expect(header).toContain("// @grant        GM.getValue");
+    expect(header).toContain("// @grant        GM.xmlHttpRequest");
+    expect(header).toContain("// @grant        GM.setClipboard");
+    expect(header).toContain("// @grant        GM.openInTab");
+    expect(header).toContain("// @grant        GM.addStyle");
+  });
 });

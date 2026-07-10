@@ -20,6 +20,10 @@ block new popups by pointing at them.
 **From source:** `npm install && npm run build`, then drag `dist/popup-zapper.user.js`
 onto the Violentmonkey **Dashboard**.
 
+### On a phone (iPhone / Android)
+
+See [docs/INSTALL-mobile.md](docs/INSTALL-mobile.md) for the per-platform guide.
+
 ## What runs automatically (no buttons)
 
 On every enabled site these happen silently:

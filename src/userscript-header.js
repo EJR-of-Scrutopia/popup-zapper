@@ -20,6 +20,12 @@ export function buildHeader(version) {
 // @grant        GM_xmlhttpRequest
 // @grant        GM_openInTab
 // @grant        GM_info
+// @grant        GM.setValue
+// @grant        GM.getValue
+// @grant        GM.setClipboard
+// @grant        GM.xmlHttpRequest
+// @grant        GM.openInTab
+// @grant        GM.addStyle
 // @connect      *
 // @noframes
 // ==/UserScript==

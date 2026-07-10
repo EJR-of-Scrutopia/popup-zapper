@@ -16,7 +16,7 @@ import { parseVersion, updatePlan } from "./lib/updates.js";
 import {
   createControlMenu, createSettingsPanel, createPickerToolbar,
   createActivityPanel, createFilterPanel, formatStatus,
-  setTheme, getTheme,
+  setTheme, getTheme, setTouch, detectTouch,
 } from "./lib/ui.js";
 
 const gm = createGm();
@@ -454,6 +454,7 @@ try {
 installReloadDefense();
 
 async function bootAsync() {
+  setTouch(detectTouch());
   library = await loadLibraryAsync((k) => gm.get(k));
   setTheme(await gm.get(THEME_KEY, "auto"));
   const start = () => { runOnce(); startObserver(); refreshControl(); };
