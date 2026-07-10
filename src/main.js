@@ -224,7 +224,7 @@ function offerFreeze() {
   if (!hosts.length) { setStatus("No known paywall vendor detected to block"); return; }
   const filters = buildUblockFilters(hosts);
   let copied = false;
-  try { GM_setClipboard(filters); copied = true; } catch { /* not granted */ }
+  try { gm.clipboard(filters); copied = true; } catch { /* not granted */ }
   closeFilterPanel();
   filterPanel = createFilterPanel({ filters, hosts, copied, onClose: closeFilterPanel });
   document.body.appendChild(filterPanel);
@@ -240,12 +240,8 @@ function doRemovePaywall() {
   try { captureSnapshot(document, window.sessionStorage); } catch { /* ignore */ }
 
   // 2. re-download cookie-free and open the clean copy in a NEW tab.
-  if (typeof GM_xmlhttpRequest !== "function") {
-    setStatus("Remove paywall: fetch unavailable in this manager");
-    return;
-  }
   setStatus("Fetching a clean, cookie-free copy…");
-  GM_xmlhttpRequest({
+  gm.xhr({
     method: "GET",
     url: location.href,
     anonymous: true,
