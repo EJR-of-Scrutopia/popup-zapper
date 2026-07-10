@@ -9,15 +9,8 @@ export const DEFAULT_LIBRARY = {
   whitelist: [],
 };
 
-export function loadLibrary(getValue) {
-  let raw;
-  try {
-    raw = getValue("popupZapper.library");
-  } catch {
-    return clone(DEFAULT_LIBRARY);
-  }
+export function parseLibrary(raw) {
   if (!raw) return clone(DEFAULT_LIBRARY);
-
   let parsed;
   try {
     parsed = JSON.parse(raw);
@@ -28,6 +21,26 @@ export function loadLibrary(getValue) {
     return clone(DEFAULT_LIBRARY);
   }
   return { ...clone(DEFAULT_LIBRARY), ...parsed };
+}
+
+export function loadLibrary(getValue) {
+  let raw;
+  try {
+    raw = getValue("popupZapper.library");
+  } catch {
+    return clone(DEFAULT_LIBRARY);
+  }
+  return parseLibrary(raw);
+}
+
+export async function loadLibraryAsync(getValueAsync) {
+  let raw;
+  try {
+    raw = await getValueAsync("popupZapper.library");
+  } catch {
+    return clone(DEFAULT_LIBRARY);
+  }
+  return parseLibrary(raw);
 }
 
 export function saveLibrary(setValue, library) {
