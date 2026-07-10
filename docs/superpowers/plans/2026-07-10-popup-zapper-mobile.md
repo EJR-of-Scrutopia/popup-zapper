@@ -211,9 +211,9 @@ describe("createGm", () => {
   });
 
   it("openTab prefers GM_openInTab, else window.open", () => {
-    const gm1 = createGm({ GM_openInTab: vi.fn() });
-    gm1.openTab("u");
-    expect(createGm({ GM_openInTab: vi.fn() })).toBeTruthy();
+    const gmOpen = vi.fn();
+    createGm({ GM_openInTab: gmOpen }).openTab("u");
+    expect(gmOpen).toHaveBeenCalledWith("u", { active: true });
     const open = vi.fn(() => ({}));
     createGm({ open }).openTab("u");
     expect(open).toHaveBeenCalledWith("u", "_blank");
