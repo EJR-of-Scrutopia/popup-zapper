@@ -1,4 +1,5 @@
-import { loadLibrary, saveLibrary } from "./lib/storage.js";
+import { loadLibraryAsync, saveLibrary } from "./lib/storage.js";
+import { createGm } from "./lib/gm.js";
 import { runBlocker } from "./lib/blocker.js";
 import { createReloadGuard } from "./lib/reload-guard.js";
 import { extractKeywords } from "./lib/extract.js";
@@ -18,19 +19,18 @@ import {
   setTheme, getTheme,
 } from "./lib/ui.js";
 
-const getV = (k) => GM_getValue(k);
-const setV = (k, v) => GM_setValue(k, v);
+const gm = createGm();
 const hostname = location.hostname.replace(/^www\./, "");
 const RAW_URL = "https://raw.githubusercontent.com/EJR-of-Scrutopia/popup-zapper/master/dist/popup-zapper.user.js";
 const VERSION = (typeof GM_info !== "undefined" && GM_info && GM_info.script)
   ? GM_info.script.version : "0.0.0";
 
-let library = loadLibrary(getV);
-const persist = () => saveLibrary(setV, library);
-
 // Appearance preference (global, not per-site): "auto" | "light" | "dark".
 const THEME_KEY = "pz-theme";
-setTheme(getV(THEME_KEY) || "auto");
+
+// library is filled by bootAsync() before anything renders; writes fire-and-forget.
+let library = null;
+const persist = () => { saveLibrary((k, v) => gm.set(k, v), library); };
 const activityLog = createActivityLog();
 const undo = createUndoStack();
 
@@ -276,9 +276,7 @@ function doRemovePaywall() {
 // Violentmonkey intercept to show their native install/update page. The whole
 // flow lives in the Settings panel (state below) so there are no browser popups.
 function openInstallPage() {
-  if (typeof GM_openInTab === "function") { GM_openInTab(RAW_URL, { active: true }); return; }
-  const w = window.open(RAW_URL, "_blank");
-  if (!w) window.location.href = RAW_URL; // popup blocked — navigate instead
+  gm.openTab(RAW_URL);
 }
 
 // idle | checking | current | available | error | opened
@@ -289,10 +287,6 @@ function setUpdateState(next) {
 }
 
 function checkUpdates() {
-  if (typeof GM_xmlhttpRequest !== "function") {
-    setUpdateState({ state: "error" });
-    return;
-  }
   setUpdateState({ state: "checking" });
   const decide = (remote) => {
     const plan = updatePlan(VERSION, remote);
@@ -300,7 +294,7 @@ function checkUpdates() {
     else if (plan.action === "error") setUpdateState({ state: "error" });
     else setUpdateState({ state: "current" });
   };
-  GM_xmlhttpRequest({
+  gm.xhr({
     method: "GET",
     url: RAW_URL + "?t=" + Date.now(), // cache-bust GitHub raw
     onload: (res) => decide(parseVersion(res.responseText)),
@@ -318,7 +312,7 @@ function reloadPage() { location.reload(); }
 function copyDiagnostics() {
   const report = collectDiagnostics(document);
   try {
-    GM_setClipboard(report);
+    gm.clipboard(report);
     alert("Popup Zapper: diagnostics copied to clipboard. Paste them to share.");
   } catch {
     // eslint-disable-next-line no-console
@@ -372,7 +366,7 @@ function openSettings() {
       library.global.push(rule); persist(); reopenSettings();
     },
     onToggleCleanup: (on) => { domainEntry().cleanup = on; persist(); if (on) runOnce(); },
-    onSetTheme: (mode) => { setV(THEME_KEY, setTheme(mode)); repaint(); },
+    onSetTheme: (mode) => { gm.set(THEME_KEY, setTheme(mode)); repaint(); },
     update: updateState,
     onCheckUpdates: checkUpdates,
     onInstallUpdate: installUpdate,
@@ -449,11 +443,15 @@ try {
 } catch { /* not available in all managers */ }
 
 // ---- boot ----
+// Reload-defense must arm at document-start (it uses only sessionStorage, no GM
+// storage), so it stays synchronous even though the library load is async.
 installReloadDefense();
-function boot() {
-  runOnce();
-  startObserver();
-  refreshControl();
+
+async function bootAsync() {
+  library = await loadLibraryAsync((k) => gm.get(k));
+  setTheme(await gm.get(THEME_KEY, "auto"));
+  const start = () => { runOnce(); startObserver(); refreshControl(); };
+  if (document.body) start();
+  else document.addEventListener("DOMContentLoaded", start, { once: true });
 }
-if (document.body) boot();
-else document.addEventListener("DOMContentLoaded", boot, { once: true });
+bootAsync();
