@@ -1,7 +1,10 @@
 // Normalizes userscript-manager API differences behind one interface.
 // Tampermonkey/Violentmonkey expose synchronous GM_* AND async GM.*; the Safari
 // Userscripts app exposes async GM.* only (no sync storage, no menu commands).
-// Every method prefers the richest available API and degrades gracefully.
+// Fallback order is chosen per method, not uniform: storage (get/set) prefers
+// async GM.* because it is the only form the Safari app offers; the action
+// methods (xhr/clipboard/openTab) prefer the callback GM_* form for reliable
+// onload semantics, then GM.*, then a plain web-API shim. All degrade gracefully.
 export function createGm(env = globalThis) {
   const has = (name) => typeof env[name] === "function";
   const gmNs = env.GM && typeof env.GM === "object" ? env.GM : null;
