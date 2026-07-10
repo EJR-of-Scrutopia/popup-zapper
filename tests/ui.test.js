@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   createControlMenu, createSettingsPanel, createPickerToolbar, createActivityPanel,
-  formatStatus, palette, setTheme, getTheme,
+  formatStatus, palette, setTheme, getTheme, setTouch, getTouch, detectTouch,
 } from "../src/lib/ui.js";
 
 beforeEach(() => { document.body.innerHTML = ""; });
@@ -91,6 +91,37 @@ describe("theme", () => {
     expect(getTheme()).toBe("dark");
     expect(light.bg).not.toBe(dark.bg);
     expect(setTheme("nonsense")).toBe("auto"); // invalid falls back to auto
+  });
+});
+
+describe("touch adaptation", () => {
+  it("setTouch toggles the flag and getTouch reports it", () => {
+    expect(setTouch(true)).toBe(true);
+    expect(getTouch()).toBe(true);
+    setTouch(false);
+  });
+
+  it("badge shows its label immediately on touch (no hover needed)", () => {
+    setTouch(true);
+    const ctrl = createControlMenu({
+      enabled: true, hostname: "x.com", open: false, status: "", blocked: false,
+      onToggleMenu() {}, onToggleSite() {}, onBlock() {}, onRemovePaywall() {}, onRevert() {}, onReveal() {}, onSettings() {},
+    });
+    const name = [...ctrl.querySelectorAll("span")].find((s) => s.textContent === "Popup Zapper");
+    expect(name.style.maxWidth).not.toBe("0px");
+    expect(name.style.opacity).toBe("1");
+    setTouch(false);
+  });
+
+  it("menu items get a larger min-height on touch", () => {
+    setTouch(true);
+    const ctrl = createControlMenu({
+      enabled: true, hostname: "x.com", open: true, status: "", blocked: false,
+      onToggleMenu() {}, onToggleSite() {}, onBlock() {}, onRemovePaywall() {}, onRevert() {}, onReveal() {}, onSettings() {},
+    });
+    const block = ctrl.querySelector("[data-act='block']");
+    expect(block.style.minHeight).toBe("44px");
+    setTouch(false);
   });
 });
 

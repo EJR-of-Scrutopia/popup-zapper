@@ -33,6 +33,20 @@ function isDark() {
   return prefersDark();
 }
 
+// Touch/small-screen mode. Set once at boot (main calls setTouch(detectTouch()))
+// so every factory renders larger targets and skips hover-only affordances.
+let touchMode = false;
+export function setTouch(v) { touchMode = !!v; return touchMode; }
+export function getTouch() { return touchMode; }
+export function detectTouch() {
+  try {
+    return !!(
+      (navigator && navigator.maxTouchPoints > 0) ||
+      (window.matchMedia && window.matchMedia("(pointer: coarse)").matches)
+    );
+  } catch { return false; }
+}
+
 export function palette() {
   return isDark()
     ? {
@@ -73,7 +87,8 @@ export function createControlMenu({
 }) {
   const t = palette();
   const wrap = own(tag("div", { className: PREFIX + "control" }), "control");
-  wrap.style.cssText = "position:fixed;bottom:12px;right:12px;z-index:2147483647;font:12px sans-serif;";
+  wrap.style.cssText = "position:fixed;bottom:12px;right:12px;z-index:2147483647;font:12px sans-serif;" +
+    (touchMode ? "bottom:calc(12px + env(safe-area-inset-bottom));right:calc(12px + env(safe-area-inset-right));" : "");
 
   // Bordered chip so it's always visible on any background; theme-coloured.
   const badge = tag("button");
@@ -92,9 +107,10 @@ export function createControlMenu({
     '<path fill="currentColor" d="M7 2v11h3v9l7-12h-4l4-8z"/>' + strike + "</svg>";
 
   const name = tag("span", { textContent: "Popup Zapper" });
+  const nameOpen = open || touchMode;
   name.style.cssText =
     "overflow:hidden;white-space:nowrap;transition:max-width .25s ease,opacity .25s ease;" +
-    (open ? "max-width:140px;opacity:1;" : "max-width:0;opacity:0;");
+    (nameOpen ? "max-width:140px;opacity:1;" : "max-width:0;opacity:0;");
 
   // Red indicator: shown when the zapper actually blocked something here.
   const dot = tag("span");
@@ -106,7 +122,7 @@ export function createControlMenu({
   badge.appendChild(icon);
   badge.appendChild(name);
   badge.appendChild(dot);
-  if (!open) {
+  if (!open && !touchMode) {
     badge.addEventListener("mouseenter", () => { name.style.maxWidth = "140px"; name.style.opacity = "1"; });
     badge.addEventListener("mouseleave", () => { name.style.maxWidth = "0"; name.style.opacity = "0"; });
   }
@@ -143,7 +159,8 @@ export function createControlMenu({
     b.setAttribute("data-act", act);
     b.style.cssText =
       "display:block;width:100%;text-align:left;padding:9px 12px;border:0;" +
-      `background:${t.bg};color:${accent || t.fg};cursor:pointer;font:12px sans-serif;`;
+      `background:${t.bg};color:${accent || t.fg};cursor:pointer;font:12px sans-serif;` +
+      (touchMode ? "min-height:44px;" : "");
     b.addEventListener("mouseenter", () => { b.style.background = t.hover; });
     b.addEventListener("mouseleave", () => { b.style.background = t.bg; });
     if (handler) b.addEventListener("click", handler);
@@ -332,6 +349,7 @@ export function createPickerToolbar({ onPrev, onNext, onGrow, onShrink, onBlock,
     b.setAttribute("data-act", act);
     b.style.cssText =
       "margin:0 3px;padding:4px 9px;font:13px sans-serif;cursor:pointer;border-radius:4px;border:0;" +
+      (touchMode ? "min-height:44px;min-width:44px;" : "") +
       (primary ? "background:#2e7d32;color:#fff;font-weight:bold;" : "background:#f0f0f0;color:#111;");
     b.addEventListener("click", handler);
     return b;
@@ -341,6 +359,7 @@ export function createPickerToolbar({ onPrev, onNext, onGrow, onShrink, onBlock,
     "position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2147483647;" +
     `background:${t.bg};color:${t.fg};padding:8px 12px;border:1px solid ${t.border};border-radius:8px;` +
     `font:13px sans-serif;box-shadow:${t.shadow};display:flex;align-items:center;`;
+  if (touchMode) bar.style.paddingTop = "calc(8px + env(safe-area-inset-top))";
   bar.appendChild(tag("span", { textContent: "Pick the popup: ", style: "margin-right:6px" }));
   bar.appendChild(mk("prev", "◀", onPrev, "Previous candidate"));
   bar.appendChild(mk("next", "▶", onNext, "Next candidate"));
