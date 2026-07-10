@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Popup Zapper
 // @namespace    https://github.com/EJR-of-Scrutopia/popup-zapper
-// @version      2.0.4
+// @version      2.1.0
 // @description  Remove login/consent/newsletter/paywall popups, reveal blurred/gated content, defeat reload traps, and learn popups by click.
 // @author       Param
 // @homepageURL  https://github.com/EJR-of-Scrutopia/popup-zapper
@@ -17,6 +17,12 @@
 // @grant        GM_xmlhttpRequest
 // @grant        GM_openInTab
 // @grant        GM_info
+// @grant        GM.setValue
+// @grant        GM.getValue
+// @grant        GM.setClipboard
+// @grant        GM.xmlHttpRequest
+// @grant        GM.openInTab
+// @grant        GM.addStyle
 // @connect      *
 // @noframes
 // ==/UserScript==
@@ -32,13 +38,7 @@
     domains: {},
     whitelist: []
   };
-  function loadLibrary(getValue) {
-    let raw;
-    try {
-      raw = getValue("popupZapper.library");
-    } catch {
-      return clone(DEFAULT_LIBRARY);
-    }
+  function parseLibrary(raw) {
     if (!raw) return clone(DEFAULT_LIBRARY);
     let parsed;
     try {
@@ -51,11 +51,66 @@
     }
     return { ...clone(DEFAULT_LIBRARY), ...parsed };
   }
+  async function loadLibraryAsync(getValueAsync) {
+    let raw;
+    try {
+      raw = await getValueAsync("popupZapper.library");
+    } catch {
+      return clone(DEFAULT_LIBRARY);
+    }
+    return parseLibrary(raw);
+  }
   function saveLibrary(setValue, library2) {
     setValue("popupZapper.library", JSON.stringify(library2));
   }
   function clone(obj) {
     return JSON.parse(JSON.stringify(obj));
+  }
+
+  // src/lib/gm.js
+  function createGm(env = globalThis) {
+    const has = (name) => typeof env[name] === "function";
+    const gmNs = env.GM && typeof env.GM === "object" ? env.GM : null;
+    async function get(key, dflt) {
+      if (gmNs && typeof gmNs.getValue === "function") return gmNs.getValue(key, dflt);
+      if (has("GM_getValue")) {
+        const v = env.GM_getValue(key);
+        return v === void 0 ? dflt : v;
+      }
+      if (env.localStorage) {
+        const v = env.localStorage.getItem(key);
+        return v === null || v === void 0 ? dflt : v;
+      }
+      return dflt;
+    }
+    async function set(key, val) {
+      if (gmNs && typeof gmNs.setValue === "function") return void await gmNs.setValue(key, val);
+      if (has("GM_setValue")) return void env.GM_setValue(key, val);
+      if (env.localStorage) return void env.localStorage.setItem(key, val);
+    }
+    function xhr(details) {
+      if (has("GM_xmlhttpRequest")) return env.GM_xmlhttpRequest(details);
+      if (gmNs && typeof gmNs.xmlHttpRequest === "function") return gmNs.xmlHttpRequest(details);
+      if (typeof env.fetch === "function") {
+        env.fetch(details.url, { method: details.method || "GET" }).then((r) => r.text().then((t) => details.onload && details.onload({ responseText: t, status: r.status }))).catch(() => details.onerror && details.onerror());
+      } else if (details.onerror) details.onerror();
+    }
+    async function clipboard(text) {
+      if (has("GM_setClipboard")) return void env.GM_setClipboard(text);
+      if (gmNs && typeof gmNs.setClipboard === "function") return void await gmNs.setClipboard(text);
+      if (env.navigator && env.navigator.clipboard) return env.navigator.clipboard.writeText(text);
+    }
+    function openTab(url) {
+      if (has("GM_openInTab")) return void env.GM_openInTab(url, { active: true });
+      if (gmNs && typeof gmNs.openInTab === "function") return void gmNs.openInTab(url, false);
+      if (typeof env.open === "function") {
+        const w = env.open(url, "_blank");
+        if (!w && env.location) env.location.href = url;
+        return;
+      }
+      if (env.location) env.location.href = url;
+    }
+    return { get, set, xhr, clipboard, openTab };
   }
 
   // src/lib/rules.js
@@ -1067,6 +1122,21 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     if (themeMode === "light") return false;
     return prefersDark();
   }
+  var touchMode = false;
+  function setTouch(v) {
+    touchMode = !!v;
+    return touchMode;
+  }
+  function getTouch() {
+    return touchMode;
+  }
+  function detectTouch() {
+    try {
+      return !!(navigator && navigator.maxTouchPoints > 0 || window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+    } catch {
+      return false;
+    }
+  }
   function palette() {
     return isDark() ? {
       bg: "#1f1f22",
@@ -1139,7 +1209,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
   }) {
     const t = palette();
     const wrap = own(tag("div", { className: PREFIX2 + "control" }), "control");
-    wrap.style.cssText = "position:fixed;bottom:12px;right:12px;z-index:2147483647;font:12px sans-serif;";
+    wrap.style.cssText = "position:fixed;bottom:12px;right:12px;z-index:2147483647;font:12px sans-serif;" + (touchMode ? "bottom:calc(12px + env(safe-area-inset-bottom));right:calc(12px + env(safe-area-inset-right));" : "");
     const badge = tag("button");
     badge.setAttribute("data-act", "menu");
     badge.title = enabled ? "Popup Zapper: on \u2014 click for menu" : "Popup Zapper: off \u2014 click for menu";
@@ -1149,14 +1219,15 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     const strike = enabled ? "" : '<line x1="3" y1="3" x2="21" y2="21" stroke="currentColor" stroke-width="2.5"/>';
     icon.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7 2v11h3v9l7-12h-4l4-8z"/>' + strike + "</svg>";
     const name = tag("span", { textContent: "Popup Zapper" });
-    name.style.cssText = "overflow:hidden;white-space:nowrap;transition:max-width .25s ease,opacity .25s ease;" + (open ? "max-width:140px;opacity:1;" : "max-width:0;opacity:0;");
+    const nameOpen = open || touchMode;
+    name.style.cssText = "overflow:hidden;white-space:nowrap;transition:max-width .25s ease,opacity .25s ease;" + (nameOpen ? "max-width:140px;opacity:1;" : "max-width:0;opacity:0;");
     const dot = tag("span");
     dot.setAttribute("data-pz-dot", "");
     dot.style.cssText = `position:absolute;top:-3px;right:-3px;width:9px;height:9px;border-radius:50%;background:${t.danger};border:1.5px solid ${t.chip};display:${blocked ? "block" : "none"};`;
     badge.appendChild(icon);
     badge.appendChild(name);
     badge.appendChild(dot);
-    if (!open) {
+    if (!open && !touchMode) {
       badge.addEventListener("mouseenter", () => {
         name.style.maxWidth = "140px";
         name.style.opacity = "1";
@@ -1188,7 +1259,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     const item = (act, label, handler, accent) => {
       const b = tag("button", { textContent: label });
       b.setAttribute("data-act", act);
-      b.style.cssText = `display:block;width:100%;text-align:left;padding:9px 12px;border:0;background:${t.bg};color:${accent || t.fg};cursor:pointer;font:12px sans-serif;`;
+      b.style.cssText = `display:block;width:100%;text-align:left;padding:9px 12px;border:0;background:${t.bg};color:${accent || t.fg};cursor:pointer;font:12px sans-serif;` + (touchMode ? "min-height:44px;" : "");
       b.addEventListener("mouseenter", () => {
         b.style.background = t.hover;
       });
@@ -1230,6 +1301,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     onCheckUpdates,
     onInstallUpdate,
     onReloadPage,
+    onCopyUpdate,
     onShowLog,
     onDiagnostics,
     onClose
@@ -1316,7 +1388,11 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     verRow.style.cssText = `display:flex;gap:8px;align-items:center;margin:10px 0 4px;border-top:1px solid ${t.border};padding-top:8px;`;
     verRow.appendChild(tag("span", { textContent: `Popup Zapper v${version}`, style: `flex:1;color:${t.sub};` }));
     if (u.state === "available") {
-      verRow.appendChild(btn(`Update to v${u.remote}`, "install-update", onInstallUpdate));
+      if (getTouch()) {
+        verRow.appendChild(btn("Copy update link", "copy-update", onCopyUpdate));
+      } else {
+        verRow.appendChild(btn(`Update to v${u.remote}`, "install-update", onInstallUpdate));
+      }
     } else if (u.state === "opened") {
       verRow.appendChild(btn("\u21BB Reload to apply", "reload-page", onReloadPage));
     } else {
@@ -1332,7 +1408,8 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       current: "You're on the latest version \u2713",
       error: "Couldn't check \u2014 network blocked.",
       available: `Version ${u.remote} is ready to install.`,
-      opened: "Install page opened. Click Update/Reinstall there, then reload here."
+      opened: "Install page opened. Click Update/Reinstall there, then reload here.",
+      copied: "Link copied. Open it in your userscript app (Userscripts) to reinstall the new version."
     }[u.state];
     if (noteText) {
       panel.appendChild(tag("div", { textContent: noteText, style: `color:${t.sub};font-size:12px;margin:2px 0 4px;` }));
@@ -1349,12 +1426,13 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     const mk = (act, label, handler, title, primary) => {
       const b = tag("button", { textContent: label, title: title || label });
       b.setAttribute("data-act", act);
-      b.style.cssText = "margin:0 3px;padding:4px 9px;font:13px sans-serif;cursor:pointer;border-radius:4px;border:0;" + (primary ? "background:#2e7d32;color:#fff;font-weight:bold;" : "background:#f0f0f0;color:#111;");
+      b.style.cssText = "margin:0 3px;padding:4px 9px;font:13px sans-serif;cursor:pointer;border-radius:4px;border:0;" + (touchMode ? "min-height:44px;min-width:44px;" : "") + (primary ? "background:#2e7d32;color:#fff;font-weight:bold;" : "background:#f0f0f0;color:#111;");
       b.addEventListener("click", handler);
       return b;
     };
     const bar = own(tag("div", { className: PREFIX2 + "picker" }), "picker");
     bar.style.cssText = `position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2147483647;background:${t.bg};color:${t.fg};padding:8px 12px;border:1px solid ${t.border};border-radius:8px;font:13px sans-serif;box-shadow:${t.shadow};display:flex;align-items:center;`;
+    if (touchMode) bar.style.paddingTop = "calc(8px + env(safe-area-inset-top))";
     bar.appendChild(tag("span", { textContent: "Pick the popup: ", style: "margin-right:6px" }));
     bar.appendChild(mk("prev", "\u25C0", onPrev, "Previous candidate"));
     bar.appendChild(mk("next", "\u25B6", onNext, "Next candidate"));
@@ -1440,15 +1518,15 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
   }
 
   // src/main.js
-  var getV = (k) => GM_getValue(k);
-  var setV = (k, v) => GM_setValue(k, v);
+  var gm = createGm();
   var hostname = location.hostname.replace(/^www\./, "");
   var RAW_URL = "https://raw.githubusercontent.com/EJR-of-Scrutopia/popup-zapper/master/dist/popup-zapper.user.js";
   var VERSION = typeof GM_info !== "undefined" && GM_info && GM_info.script ? GM_info.script.version : "0.0.0";
-  var library = loadLibrary(getV);
-  var persist = () => saveLibrary(setV, library);
   var THEME_KEY = "pz-theme";
-  setTheme(getV(THEME_KEY) || "auto");
+  var library = null;
+  var persist = () => {
+    saveLibrary((k, v) => gm.set(k, v), library);
+  };
   var activityLog = createActivityLog();
   var undo = createUndoStack();
   function domainEntry() {
@@ -1648,15 +1726,12 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       return;
     }
     const filters = buildUblockFilters(hosts);
-    let copied = false;
-    try {
-      GM_setClipboard(filters);
-      copied = true;
-    } catch {
-    }
-    closeFilterPanel();
-    filterPanel = createFilterPanel({ filters, hosts, copied, onClose: closeFilterPanel });
-    document.body.appendChild(filterPanel);
+    const show = (copied) => {
+      closeFilterPanel();
+      filterPanel = createFilterPanel({ filters, hosts, copied, onClose: closeFilterPanel });
+      document.body.appendChild(filterPanel);
+    };
+    Promise.resolve(gm.clipboard(filters)).then(() => show(true), () => show(false));
   }
   function doRemovePaywall() {
     try {
@@ -1669,12 +1744,8 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       captureSnapshot(document, window.sessionStorage);
     } catch {
     }
-    if (typeof GM_xmlhttpRequest !== "function") {
-      setStatus("Remove paywall: fetch unavailable in this manager");
-      return;
-    }
     setStatus("Fetching a clean, cookie-free copy\u2026");
-    GM_xmlhttpRequest({
+    gm.xhr({
       method: "GET",
       url: location.href,
       anonymous: true,
@@ -1707,12 +1778,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     });
   }
   function openInstallPage() {
-    if (typeof GM_openInTab === "function") {
-      GM_openInTab(RAW_URL, { active: true });
-      return;
-    }
-    const w = window.open(RAW_URL, "_blank");
-    if (!w) window.location.href = RAW_URL;
+    gm.openTab(RAW_URL);
   }
   var updateState = { state: "idle" };
   function setUpdateState(next) {
@@ -1720,10 +1786,6 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     if (settingsPanel) reopenSettings();
   }
   function checkUpdates() {
-    if (typeof GM_xmlhttpRequest !== "function") {
-      setUpdateState({ state: "error" });
-      return;
-    }
     setUpdateState({ state: "checking" });
     const decide = (remote) => {
       const plan = updatePlan(VERSION, remote);
@@ -1731,7 +1793,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       else if (plan.action === "error") setUpdateState({ state: "error" });
       else setUpdateState({ state: "current" });
     };
-    GM_xmlhttpRequest({
+    gm.xhr({
       method: "GET",
       url: RAW_URL + "?t=" + Date.now(),
       // cache-bust GitHub raw
@@ -1748,13 +1810,13 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
   }
   function copyDiagnostics() {
     const report = collectDiagnostics(document);
-    try {
-      GM_setClipboard(report);
-      alert("Popup Zapper: diagnostics copied to clipboard. Paste them to share.");
-    } catch {
-      console.log("[Popup Zapper diagnostics]\n" + report);
-      alert("Popup Zapper: diagnostics logged to the console (press F12 to view).");
-    }
+    Promise.resolve(gm.clipboard(report)).then(
+      () => alert("Popup Zapper: diagnostics copied to clipboard. Paste them to share."),
+      () => {
+        console.log("[Popup Zapper diagnostics]\n" + report);
+        alert("Popup Zapper: diagnostics logged to the console (press F12 to view).");
+      }
+    );
   }
   var logPanel = null;
   var logUnsub = null;
@@ -1841,13 +1903,19 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
         if (on) runOnce();
       },
       onSetTheme: (mode) => {
-        setV(THEME_KEY, setTheme(mode));
+        gm.set(THEME_KEY, setTheme(mode));
         repaint();
       },
       update: updateState,
       onCheckUpdates: checkUpdates,
       onInstallUpdate: installUpdate,
       onReloadPage: reloadPage,
+      onCopyUpdate: () => {
+        Promise.resolve(gm.clipboard(RAW_URL)).then(
+          () => setUpdateState({ state: "copied", remote: updateState.remote }),
+          () => setUpdateState({ state: "available", remote: updateState.remote })
+        );
+      },
       onShowLog: toggleLog,
       onDiagnostics: copyDiagnostics,
       onClose: closeSettings
@@ -1924,11 +1992,17 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
   } catch {
   }
   installReloadDefense();
-  function boot() {
-    runOnce();
-    startObserver();
-    refreshControl();
+  async function bootAsync() {
+    setTouch(detectTouch());
+    library = await loadLibraryAsync((k) => gm.get(k));
+    setTheme(await gm.get(THEME_KEY, "auto"));
+    const start = () => {
+      runOnce();
+      startObserver();
+      refreshControl();
+    };
+    if (document.body) start();
+    else document.addEventListener("DOMContentLoaded", start, { once: true });
   }
-  if (document.body) boot();
-  else document.addEventListener("DOMContentLoaded", boot, { once: true });
+  bootAsync();
 })();

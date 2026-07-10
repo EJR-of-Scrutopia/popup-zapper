@@ -277,7 +277,7 @@ function openInstallPage() {
   gm.openTab(RAW_URL);
 }
 
-// idle | checking | current | available | error | opened
+// idle | checking | current | available | error | opened | copied
 let updateState = { state: "idle" };
 function setUpdateState(next) {
   updateState = next;
