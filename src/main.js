@@ -223,11 +223,13 @@ function offerFreeze() {
   const hosts = findPaywallHosts(document, window.performance);
   if (!hosts.length) { setStatus("No known paywall vendor detected to block"); return; }
   const filters = buildUblockFilters(hosts);
-  let copied = false;
-  try { gm.clipboard(filters); copied = true; } catch { /* not granted */ }
-  closeFilterPanel();
-  filterPanel = createFilterPanel({ filters, hosts, copied, onClose: closeFilterPanel });
-  document.body.appendChild(filterPanel);
+  const show = (copied) => {
+    closeFilterPanel();
+    filterPanel = createFilterPanel({ filters, hosts, copied, onClose: closeFilterPanel });
+    document.body.appendChild(filterPanel);
+  };
+  // gm.clipboard is async; render the panel once the write settles so "copied" is truthful.
+  Promise.resolve(gm.clipboard(filters)).then(() => show(true), () => show(false));
 }
 
 function doRemovePaywall() {
@@ -307,14 +309,14 @@ function reloadPage() { location.reload(); }
 // ---- diagnostics ----
 function copyDiagnostics() {
   const report = collectDiagnostics(document);
-  try {
-    gm.clipboard(report);
-    alert("Popup Zapper: diagnostics copied to clipboard. Paste them to share.");
-  } catch {
-    // eslint-disable-next-line no-console
-    console.log("[Popup Zapper diagnostics]\n" + report);
-    alert("Popup Zapper: diagnostics logged to the console (press F12 to view).");
-  }
+  Promise.resolve(gm.clipboard(report)).then(
+    () => alert("Popup Zapper: diagnostics copied to clipboard. Paste them to share."),
+    () => {
+      // eslint-disable-next-line no-console
+      console.log("[Popup Zapper diagnostics]\n" + report);
+      alert("Popup Zapper: diagnostics logged to the console (press F12 to view).");
+    },
+  );
 }
 
 // ---- activity log panel ----
