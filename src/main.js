@@ -369,7 +369,14 @@ function openSettings() {
     onCheckUpdates: checkUpdates,
     onInstallUpdate: installUpdate,
     onReloadPage: reloadPage,
-    onCopyUpdate: () => { gm.clipboard(RAW_URL); setUpdateState({ state: "copied" }); },
+    onCopyUpdate: () => {
+      // gm.clipboard is async; only claim "copied" if the write actually settles.
+      // On failure, stay in "available" so the Copy button remains for a retry.
+      Promise.resolve(gm.clipboard(RAW_URL)).then(
+        () => setUpdateState({ state: "copied", remote: updateState.remote }),
+        () => setUpdateState({ state: "available", remote: updateState.remote }),
+      );
+    },
     onShowLog: toggleLog,
     onDiagnostics: copyDiagnostics,
     onClose: closeSettings,
