@@ -369,6 +369,7 @@ function openSettings() {
     onCheckUpdates: checkUpdates,
     onInstallUpdate: installUpdate,
     onReloadPage: reloadPage,
+    onCopyUpdate: () => { gm.clipboard(RAW_URL); setUpdateState({ state: "copied" }); },
     onShowLog: toggleLog,
     onDiagnostics: copyDiagnostics,
     onClose: closeSettings,

@@ -141,7 +141,7 @@ describe("createSettingsPanel", () => {
     hostname: "x.com", version: "2.0.0",
     onToggleRule: () => {}, onEditRule: () => {}, onDeleteRule: () => {}, onPromoteRule: () => {},
     onToggleCleanup: () => {}, onSetTheme: () => {}, onCheckUpdates: () => {},
-    onInstallUpdate: () => {}, onReloadPage: () => {},
+    onInstallUpdate: () => {}, onReloadPage: () => {}, onCopyUpdate: () => {},
     onShowLog: () => {}, onDiagnostics: () => {}, onClose: () => {},
   };
 
@@ -183,6 +183,25 @@ describe("createSettingsPanel", () => {
 
     const current = createSettingsPanel({ ...base, library, update: { state: "current" } });
     expect(current.textContent).toMatch(/latest version/i);
+  });
+
+  it("on touch, an available update offers Copy update link instead of the install page", () => {
+    setTouch(true);
+    const onCopyUpdate = vi.fn();
+    const library = { global: [], domains: {} };
+    const el = createSettingsPanel({ ...base, library, update: { state: "available", remote: "2.1.0" }, onCopyUpdate });
+    const copyBtn = el.querySelector("[data-act='copy-update']");
+    expect(copyBtn).not.toBeNull();
+    expect(el.querySelector("[data-act='install-update']")).toBeNull();
+    copyBtn.click();
+    expect(onCopyUpdate).toHaveBeenCalledOnce();
+    setTouch(false);
+  });
+
+  it("shows the copied confirmation note", () => {
+    const library = { global: [], domains: {} };
+    const el = createSettingsPanel({ ...base, library, update: { state: "copied" } });
+    expect(el.textContent).toMatch(/copied/i);
   });
 
   it("fires onToggleRule with the new enabled state", () => {

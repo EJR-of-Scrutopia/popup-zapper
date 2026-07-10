@@ -198,7 +198,7 @@ export function createControlMenu({
 export function createSettingsPanel({
   library, hostname, version, theme, update,
   onToggleRule, onEditRule, onDeleteRule, onPromoteRule,
-  onToggleCleanup, onSetTheme, onCheckUpdates, onInstallUpdate, onReloadPage,
+  onToggleCleanup, onSetTheme, onCheckUpdates, onInstallUpdate, onReloadPage, onCopyUpdate,
   onShowLog, onDiagnostics, onClose,
 }) {
   const t = palette();
@@ -310,7 +310,11 @@ export function createSettingsPanel({
   verRow.appendChild(tag("span", { textContent: `Popup Zapper v${version}`, style: `flex:1;color:${t.sub};` }));
   // Right-hand control depends on where we are in the update flow.
   if (u.state === "available") {
-    verRow.appendChild(btn(`Update to v${u.remote}`, "install-update", onInstallUpdate));
+    if (getTouch()) {
+      verRow.appendChild(btn("Copy update link", "copy-update", onCopyUpdate));
+    } else {
+      verRow.appendChild(btn(`Update to v${u.remote}`, "install-update", onInstallUpdate));
+    }
   } else if (u.state === "opened") {
     verRow.appendChild(btn("↻ Reload to apply", "reload-page", onReloadPage));
   } else {
@@ -326,6 +330,7 @@ export function createSettingsPanel({
     error: "Couldn't check — network blocked.",
     available: `Version ${u.remote} is ready to install.`,
     opened: "Install page opened. Click Update/Reinstall there, then reload here.",
+    copied: "Link copied. Open it in your userscript app (Userscripts) to reinstall the new version.",
   }[u.state];
   if (noteText) {
     panel.appendChild(tag("div", { textContent: noteText, style: `color:${t.sub};font-size:12px;margin:2px 0 4px;` }));
