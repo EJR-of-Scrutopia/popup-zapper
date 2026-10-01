@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Popup Zapper
 // @namespace    https://github.com/EJR-of-Scrutopia/popup-zapper
-// @version      2.1.0
+// @version      2.1.1
 // @description  Remove login/consent/newsletter/paywall popups, reveal blurred/gated content, defeat reload traps, and learn popups by click.
 // @author       Param
 // @homepageURL  https://github.com/EJR-of-Scrutopia/popup-zapper
@@ -180,14 +180,24 @@
     }
     return count;
   }
+  function overflowY(cs) {
+    return cs.overflowY || (cs.overflow || "").trim().split(/\s+/).pop() || "";
+  }
   function restorePage(doc) {
-    const html = doc.documentElement;
-    const body = doc.body;
-    for (const node of [html, body]) {
+    const win = doc.defaultView || window;
+    for (const node of [doc.documentElement, doc.body]) {
       if (!node) continue;
-      node.style.setProperty("overflow", "auto", "important");
-      node.style.setProperty("position", "static", "important");
-      node.style.removeProperty("height");
+      let cs;
+      try {
+        cs = win.getComputedStyle(node);
+      } catch {
+        continue;
+      }
+      const hidden = /^(hidden|clip)$/.test(overflowY(cs));
+      const fixed = node === doc.body && cs.position === "fixed";
+      if (hidden) node.style.setProperty("overflow", "visible", "important");
+      if (fixed) node.style.setProperty("position", "static", "important");
+      if (hidden || fixed) node.style.removeProperty("height");
     }
   }
 
