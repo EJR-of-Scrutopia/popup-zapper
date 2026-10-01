@@ -32,7 +32,7 @@ describe("runBlocker", () => {
   it("restores page scroll lock", () => {
     document.body.style.overflow = "hidden";
     runBlocker({ doc: document, library: lib, hostname: "site.com" });
-    expect(document.body.style.overflow).toBe("auto");
+    expect(document.body.style.overflow).toBe("visible");
   });
 
   it("does nothing on a disabled domain", () => {

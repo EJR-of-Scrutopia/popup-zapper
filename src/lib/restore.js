@@ -52,13 +52,28 @@ export function restoreBlur(doc, isWhitelisted) {
   return count;
 }
 
+// The vertical overflow, which is what a scroll lock hides. jsdom keeps the
+// `overflow` shorthand without its longhands, whose last word is the y value.
+function overflowY(cs) {
+  return cs.overflowY || (cs.overflow || "").trim().split(/\s+/).pop() || "";
+}
+
+// Undo a scroll lock on html or body, and touch nothing on a page that has
+// none. A lock is overflow hidden or clip in y, or body fixed in place.
+// Unlocked to `visible`, never `auto`: with html and body both non-visible,
+// body's overflow stops passing to the viewport and body becomes a scroll
+// container that never scrolls, and every position:sticky element on the page
+// then sticks to it and scrolls away.
 export function restorePage(doc) {
-  const html = doc.documentElement;
-  const body = doc.body;
-  for (const node of [html, body]) {
+  const win = doc.defaultView || window;
+  for (const node of [doc.documentElement, doc.body]) {
     if (!node) continue;
-    node.style.setProperty("overflow", "auto", "important");
-    node.style.setProperty("position", "static", "important");
-    node.style.removeProperty("height");
+    let cs;
+    try { cs = win.getComputedStyle(node); } catch { continue; }
+    const hidden = /^(hidden|clip)$/.test(overflowY(cs));
+    const fixed = node === doc.body && cs.position === "fixed";
+    if (hidden) node.style.setProperty("overflow", "visible", "important");
+    if (fixed) node.style.setProperty("position", "static", "important");
+    if (hidden || fixed) node.style.removeProperty("height");
   }
 }

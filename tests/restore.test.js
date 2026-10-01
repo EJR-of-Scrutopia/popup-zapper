@@ -54,13 +54,47 @@ describe("restoreBlur", () => {
 });
 
 describe("restorePage", () => {
+  // Unlocked to `visible`, not `auto`: with html and body both non-visible,
+  // body's overflow no longer passes to the viewport, body becomes a scroll
+  // container that never scrolls, and every position:sticky element on the
+  // page sticks to it instead of the viewport (ananke-eidos.com's pinned
+  // drawing scrolled away, 2026-10-01).
   it("unfreezes html/body scroll", () => {
     document.documentElement.style.overflow = "hidden";
     document.body.style.overflow = "hidden";
     document.body.style.position = "fixed";
     restorePage(document);
-    expect(document.documentElement.style.overflow).toBe("auto");
-    expect(document.body.style.overflow).toBe("auto");
+    expect(document.documentElement.style.overflow).toBe("visible");
+    expect(document.body.style.overflow).toBe("visible");
     expect(document.body.style.position).toBe("static");
+  });
+
+  it("leaves a page that is not locked alone", () => {
+    restorePage(document);
+    expect(document.documentElement.getAttribute("style")).toBeNull();
+    expect(document.body.getAttribute("style")).toBeNull();
+  });
+
+  it("keeps the site's own body position and height when the page is not locked", () => {
+    document.body.style.position = "relative";
+    document.body.style.height = "100%";
+    restorePage(document);
+    expect(document.body.style.position).toBe("relative");
+    expect(document.body.style.height).toBe("100%");
+  });
+
+  it("unlocks only the element that is locked", () => {
+    document.documentElement.style.overflow = "hidden";
+    document.body.style.overflowX = "hidden";
+    restorePage(document);
+    expect(document.documentElement.style.overflow).toBe("visible");
+    expect(document.body.style.overflowX).toBe("hidden");
+  });
+
+  it("reads overflow-y alone, so a page hiding only sideways scroll is not locked", () => {
+    document.documentElement.style.overflowX = "hidden";
+    document.documentElement.style.overflowY = "auto";
+    restorePage(document);
+    expect(document.documentElement.style.overflowY).toBe("auto");
   });
 });
