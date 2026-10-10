@@ -53,10 +53,35 @@ userscript manager's extension menu.
 - **Reveal deeper** — appears only when a page still looks gated after the automatic pass.
   Runs the aggressive restores (un-truncate clamped articles, un-hide locked elements)
   that are too risky to run everywhere by default.
+- **Batch clicker** — opens a small panel for clicking many things on a page in turn
+  (see below). It stays open when the menu closes, and does nothing until opened.
 - **Settings** — see every rule saved for this site, toggle each on/off (to see what it
   hides), edit, delete, or promote to global; toggle tracker cleanup (delete analytics
   cookies/storage — can log you out); see the version and **check for updates**; open the
   activity log and diagnostics.
+
+## Batch clicker
+
+For download pages that cap a selection (tick ten, download, untick, next ten) and for
+pages where every item has its own "Add to zip" or "Add to basket" button.
+
+- **Tick & download** (rows with checkboxes): **Play** ticks a batch, presses the page's
+  download button, waits until the file is actually handed over, unticks, and carries
+  on, pressing *Load more* when the rows run out. A ledger in the site's own storage
+  remembers every row, so nothing is fetched twice; **Stop** saves the list as JSON.
+  **Batch**, **Start at row** and the **Types** switches choose what is taken;
+  **Select all** ticks everything and leaves the download to you.
+- **Click each** (items with their own button): **Play** presses each item's button
+  once, turns the pages itself, and stops at the last page or at **Stop after**.
+- **Pick item**: click one of the things you want clicked many times (a checkbox or a
+  button) and every match on the page is used. Remembered for the site; the switch
+  under it says whether to tick them in batches or click each. **✕** forgets it.
+- **⬇ Download button**: click the page's own download button if it is not found by
+  itself.
+- **Reset** forgets the site's ledger (press twice). **Details** shows what the page did
+  when something went wrong.
+
+Allow automatic downloads for the site, and keep the tab in front while it runs.
 
 ## Develop
 

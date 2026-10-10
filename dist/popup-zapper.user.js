@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Popup Zapper
 // @namespace    https://github.com/EJR-of-Scrutopia/popup-zapper
-// @version      2.1.1
-// @description  Remove login/consent/newsletter/paywall popups, reveal blurred/gated content, defeat reload traps, and learn popups by click.
+// @version      2.2.0
+// @description  Remove login/consent/newsletter/paywall popups, reveal blurred/gated content, defeat reload traps, learn popups by click, and click many checkboxes or buttons in batches.
 // @author       Param
 // @homepageURL  https://github.com/EJR-of-Scrutopia/popup-zapper
 // @supportURL   https://github.com/EJR-of-Scrutopia/popup-zapper/issues
@@ -23,6 +23,7 @@
 // @grant        GM.xmlHttpRequest
 // @grant        GM.openInTab
 // @grant        GM.addStyle
+// @grant        unsafeWindow
 // @connect      *
 // @noframes
 // ==/UserScript==
@@ -628,9 +629,9 @@
     for (const cls of el.classList || []) {
       if (!isHashedToken(cls)) out.push({ type: "class", value: cls, action: "remove" });
     }
-    for (const attr of el.attributes || []) {
-      if (attr.name.startsWith("data-")) {
-        out.push({ type: "attr", value: attr.name, action: "remove" });
+    for (const attr2 of el.attributes || []) {
+      if (attr2.name.startsWith("data-")) {
+        out.push({ type: "attr", value: attr2.name, action: "remove" });
       }
     }
     if (out.length === 0) {
@@ -1100,6 +1101,2318 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     return { action: "none", remote, message: "Up to date \u2713" };
   }
 
+  // src/lib/batch/rows.js
+  var LOOKS_LIKE_A_FILE = /\b(PDF|DOCX?|XLSX?|XLSM|PPTX?|ZIP|RAR|7Z|DWG|DXF|DWFX?|DGN|RVT|RFA|RTE|IFC|SKP|STP|STEP|IGS|IGES|3DS|3DM|OBJ|FBX|GSM|PLN|VWX|NWD|NWC|JPE?G|PNG|TIFF?|GIF|SVG|EPS|PSD|MP4|MOV|TXT|CSV|KMZ)\b/i;
+  var LOOKS_LIKE_A_SIZE = /\b\d+([.,]\d+)?\s?(kB|KB|MB|GB)\b/i;
+  var LOOKS_LIKE_A_MIME = /\b(application|image|video|audio|text|model)\/[a-z0-9][a-z0-9.+-]*/i;
+  var EVERY_FORMAT = new RegExp(LOOKS_LIKE_A_FILE.source, "gi");
+  var EVERY_SIZE = new RegExp(LOOKS_LIKE_A_SIZE.source, "gi");
+  var EVERY_MIME = new RegExp(LOOKS_LIKE_A_MIME.source, "gi");
+  var A_LETTER = /\p{L}/gu;
+  var TITLE_LETTERS = 15;
+  var SIGNAL_FORMAT = /(?:^|[^a-z0-9])(pdf|docx?|xlsx?|xlsm|pptx?|zip|rar|7z|dwg|dxf|dwfx?|rvt|rfa|ifc|skp|3dm|gsm|pln)(?:[^a-z0-9]|$)/i;
+  var SIGNAL_ATTRIBUTES = ["href", "src", "alt", "title", "class", "aria-label", "data-type", "xlink:href"];
+  function collapse(text) {
+    return String(text == null ? "" : text).replace(/\s+/g, " ").trim();
+  }
+  function normaliseText(text) {
+    return collapse(text).toLowerCase();
+  }
+  function isDocumentRowText(text) {
+    const raw = String(text == null ? "" : text);
+    if (!LOOKS_LIKE_A_FILE.test(raw)) return false;
+    if (LOOKS_LIKE_A_SIZE.test(raw)) return true;
+    if (!LOOKS_LIKE_A_MIME.test(raw)) return false;
+    const rest = raw.replace(EVERY_MIME, " ").replace(EVERY_FORMAT, " ");
+    return (rest.match(A_LETTER) || []).length >= TITLE_LETTERS;
+  }
+  function titleLetters(text) {
+    const rest = String(text == null ? "" : text).replace(EVERY_MIME, " ").replace(EVERY_FORMAT, " ").replace(EVERY_SIZE, " ");
+    return (rest.match(A_LETTER) || []).length;
+  }
+  function rowFacts(node) {
+    const facts = {
+      tag: String(node && node.nodeName || "").toUpperCase(),
+      links: 0,
+      downloads: 0,
+      signals: []
+    };
+    const walk = (at, depth) => {
+      if (depth > 40 || facts.signals.length > 200) return;
+      for (let child = at.firstChild; child; child = child.nextSibling) {
+        if (child.nodeType !== 1) continue;
+        if (typeof child.getAttribute === "function") {
+          if (String(child.nodeName).toUpperCase() === "A" && child.getAttribute("href")) {
+            facts.links += 1;
+            if (child.getAttribute("download") !== null) facts.downloads += 1;
+          }
+          for (const name of SIGNAL_ATTRIBUTES) {
+            const value = child.getAttribute(name);
+            if (value) facts.signals.push(String(value));
+          }
+        }
+        walk(child, depth + 1);
+      }
+    };
+    if (node) walk(node, 0);
+    return facts;
+  }
+  function formatFromSignals(signals) {
+    for (const signal of signals || []) {
+      const found = SIGNAL_FORMAT.exec(String(signal));
+      if (found) return found[1].toUpperCase();
+    }
+    return "";
+  }
+  function isDocumentRow(text, facts) {
+    if (isDocumentRowText(text)) return true;
+    if (titleLetters(text) < TITLE_LETTERS || !facts) return false;
+    if (formatFromSignals(facts.signals)) return true;
+    if (facts.downloads > 0) return true;
+    if (facts.links > 0 && SIGNAL_FORMAT.test(String(text))) return true;
+    return facts.tag === "TR" && facts.links > 0;
+  }
+  function lastMatch(text, every) {
+    const all = String(text).match(every);
+    return all ? all[all.length - 1] : "";
+  }
+  function rowIdentity(text) {
+    const raw = String(text == null ? "" : text);
+    const lines = raw.split(/[\r\n]+/).map(collapse).filter((line) => {
+      const rest = line.replace(EVERY_MIME, " ").replace(EVERY_FORMAT, " ").replace(EVERY_SIZE, " ");
+      return (rest.match(A_LETTER) || []).length >= 3;
+    });
+    return {
+      id: normaliseText(raw),
+      title: (lines.length ? lines.join(" / ") : collapse(raw)).slice(0, 240),
+      format: lastMatch(raw, EVERY_FORMAT).toUpperCase(),
+      size: collapse(lastMatch(raw, EVERY_SIZE))
+    };
+  }
+  function numberIdentities(identities) {
+    const times = /* @__PURE__ */ new Map();
+    return identities.map((identity) => {
+      const one = Object.assign({}, identity);
+      const nth = (times.get(one.id) || 0) + 1;
+      times.set(one.id, nth);
+      if (nth > 1) one.id = one.id + " #" + nth;
+      return one;
+    });
+  }
+  var BLOCKS = /^(ADDRESS|ARTICLE|ASIDE|BLOCKQUOTE|BR|DD|DIV|DL|DT|FIELDSET|FIGCAPTION|FIGURE|FOOTER|FORM|H[1-6]|HEADER|HR|LI|MAIN|NAV|OL|P|PRE|SECTION|TABLE|TBODY|TD|TFOOT|TH|THEAD|TR|UL)$/;
+  var SILENT = /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|SVG)$/;
+  function rowText(row2) {
+    const parts = [];
+    const walk = (node, depth) => {
+      if (depth > 40) return;
+      for (let child = node.firstChild; child; child = child.nextSibling) {
+        if (child.nodeType === 3) {
+          parts.push(child.nodeValue);
+        } else if (child.nodeType === 1) {
+          const name = String(child.nodeName).toUpperCase();
+          if (SILENT.test(name)) continue;
+          const block = BLOCKS.test(name);
+          if (block) parts.push("\n");
+          walk(child, depth + 1);
+          if (block) parts.push("\n");
+        }
+      }
+    };
+    walk(row2, 0);
+    return parts.join("");
+  }
+  var assumed = /* @__PURE__ */ new WeakMap();
+  function attr(node, name) {
+    return node && typeof node.getAttribute === "function" ? node.getAttribute(name) : null;
+  }
+  function boxState(box) {
+    if (!box) return null;
+    if (typeof box.checked === "boolean") return box.checked;
+    for (const name of ["aria-checked", "aria-pressed", "aria-selected"]) {
+      const said = attr(box, name);
+      if (said !== null) return said === "true" || said === "mixed";
+    }
+    try {
+      const control2 = box.control || (typeof box.querySelector === "function" ? box.querySelector('input[type="checkbox"]') : null);
+      if (control2 && typeof control2.checked === "boolean") return control2.checked;
+    } catch {
+    }
+    const cls = String(attr(box, "class") || "");
+    if (/(^|[\s_-])(is-)?(checked|selected|ticked)([\s_-]|$)/i.test(cls)) return true;
+    return null;
+  }
+  function isTicked(box) {
+    const shown = boxState(box);
+    if (shown !== null) return shown;
+    return assumed.get(box) === true;
+  }
+  function clickBox(box) {
+    const before = boxState(box);
+    box.click();
+    if (before === null && boxState(box) === null) assumed.set(box, !assumed.get(box));
+  }
+  var NATIVE = 'input[type="checkbox"]';
+  var AUTO = 'input[type="checkbox"], [role="checkbox"]';
+  function nativeSource(doc) {
+    return {
+      learned: false,
+      boxes: () => Array.from(doc.querySelectorAll(NATIVE)),
+      within: (node) => {
+        try {
+          return node.querySelectorAll(NATIVE).length;
+        } catch {
+          return 1;
+        }
+      },
+      checked: () => {
+        try {
+          return Array.from(doc.querySelectorAll(NATIVE + ":checked"));
+        } catch {
+          return [];
+        }
+      }
+    };
+  }
+  function autoSource(doc, isOurs = () => false) {
+    const keep = (el) => {
+      if (isOurs(el)) return false;
+      if (String(el.nodeName).toUpperCase() !== "INPUT") return true;
+      const up = el.parentElement;
+      return !(up && typeof up.closest === "function" && up.closest('[role="checkbox"]'));
+    };
+    return {
+      learned: false,
+      boxes: () => Array.from(doc.querySelectorAll(AUTO)).filter(keep),
+      within: (node, cap = 2) => {
+        let n = 0;
+        try {
+          for (const el of node.querySelectorAll(AUTO)) {
+            if (keep(el) && ++n >= cap) break;
+          }
+        } catch {
+          return 1;
+        }
+        return n;
+      },
+      checked() {
+        return this.boxes().filter(isTicked);
+      }
+    };
+  }
+  function learnedSource(doc, record, matches, isOurs = () => false) {
+    const tag2 = record && record.tag ? record.tag : "*";
+    const fits = (el) => !isOurs(el) && matches(el, record);
+    return {
+      learned: true,
+      boxes: () => Array.from(doc.getElementsByTagName(tag2)).filter(fits),
+      within: (node, cap = 2) => {
+        let n = 0;
+        try {
+          for (const el of node.getElementsByTagName(tag2)) {
+            if (fits(el) && ++n >= cap) break;
+          }
+        } catch {
+          return 1;
+        }
+        return n;
+      },
+      checked() {
+        return this.boxes().filter(isTicked);
+      }
+    };
+  }
+  var ROW_DEPTH = 8;
+  var MISS_AGAIN = 5e3;
+  function createRowReader(doc, options = {}) {
+    const now = typeof options.now === "function" ? options.now : () => Date.now();
+    const source = options.source || nativeSource(doc);
+    const found = /* @__PURE__ */ new WeakMap();
+    const known = /* @__PURE__ */ new WeakMap();
+    const rowSet = /* @__PURE__ */ new WeakSet();
+    let last = [];
+    function climbDocument(box) {
+      let node = box;
+      for (let step = 0; step < ROW_DEPTH && node; step++) {
+        node = node.parentElement;
+        if (!node || source.within(node) > 1) return null;
+        const text = rowText(node);
+        if (isDocumentRowText(text)) return { row: node, text, format: "" };
+        if (titleLetters(text) >= TITLE_LETTERS) {
+          const facts = rowFacts(node);
+          if (isDocumentRow(text, facts)) return { row: node, text, format: formatFromSignals(facts.signals) };
+        }
+      }
+      return null;
+    }
+    function climbLearned(box) {
+      let row2 = null;
+      let node = box;
+      for (let step = 0; step < ROW_DEPTH; step++) {
+        const up = node.parentElement;
+        if (!up || up === doc.body || up === doc.documentElement || source.within(up) > 1) break;
+        row2 = node = up;
+      }
+      if (!row2) row2 = box.parentElement || box;
+      return { row: row2, text: rowText(row2), format: formatFromSignals(rowFacts(row2).signals) };
+    }
+    function climb(box) {
+      return source.learned ? climbLearned(box) : climbDocument(box);
+    }
+    function rowFor(box) {
+      const held = found.get(box);
+      if (held && held.row) {
+        if (held.row.isConnected !== false && held.row.contains(box)) {
+          return { row: held.row, text: null, format: held.format || "" };
+        }
+      } else if (held && now() - held.at < MISS_AGAIN) {
+        return null;
+      }
+      const fresh = climb(box);
+      found.set(box, fresh ? { row: fresh.row, format: fresh.format || "" } : { row: null, at: now() });
+      return fresh;
+    }
+    function identityOf(row2, content, walked) {
+      let seen = known.get(row2);
+      if (!seen || seen.content !== content) {
+        seen = { content, identity: rowIdentity(walked !== null ? walked : rowText(row2)) };
+        known.set(row2, seen);
+      }
+      return seen.identity;
+    }
+    function read(box) {
+      const hit = rowFor(box);
+      if (!hit) return null;
+      const row2 = hit.row;
+      if (box.hidden === true || row2.hidden === true) return null;
+      rowSet.add(row2);
+      const base = identityOf(row2, row2.textContent || "", hit.text);
+      return {
+        box,
+        row: row2,
+        base: !base.format && hit.format ? Object.assign({}, base, { format: hit.format }) : base
+      };
+    }
+    function rows() {
+      const out = [];
+      for (const box of source.boxes()) {
+        const one = read(box);
+        if (one) out.push(one);
+      }
+      const numbered = numberIdentities(out.map((each) => each.base));
+      last = out.map((each, at) => ({ box: each.box, row: each.row, identity: numbered[at], base: each.base.id }));
+      return last;
+    }
+    function locate(chosen) {
+      const box = chosen && chosen.box;
+      if (!box || box.isConnected === false) return null;
+      const held = found.get(box);
+      if (!held || held.row !== chosen.row || !chosen.row.contains(box)) return null;
+      const identity = identityOf(chosen.row, chosen.row.textContent || "", null);
+      return identity.id === chosen.base ? chosen : null;
+    }
+    function checked() {
+      const out = [];
+      for (const box of source.checked()) {
+        const hit = rowFor(box);
+        if (hit) out.push({ box, row: hit.row });
+      }
+      return out;
+    }
+    function insideRow(node) {
+      for (let at = node, step = 0; at && step < 40; at = at.parentElement, step++) {
+        if (rowSet.has(at)) return true;
+      }
+      return false;
+    }
+    function explain(box) {
+      const said = [];
+      let node = box;
+      for (let step = 0; step < ROW_DEPTH && node; step++) {
+        node = node.parentElement;
+        if (!node) break;
+        const name = String(node.nodeName || "?").toUpperCase();
+        const boxes = source.within(node, 99);
+        if (boxes > 1) {
+          said.push(`${name} holds ${boxes} boxes, so the climb stops`);
+          break;
+        }
+        const text = rowText(node);
+        const facts = rowFacts(node);
+        said.push(`${name} "${collapse(text).slice(0, 60)}": ${titleLetters(text)} letters, ${facts.links} link(s), ${formatFromSignals(facts.signals) || "no file named"}`);
+      }
+      return said.join("; ");
+    }
+    return { rows, locate, checked, insideRow, explain, last: () => last, source };
+  }
+
+  // src/lib/batch/ledger.js
+  var LEDGER_PREFIX = "qs-intelligence document ledger ";
+  var MAX_BATCH_RECORDS = 2e3;
+  function ledgerKey(href) {
+    const where = new URL(String(href));
+    return LEDGER_PREFIX + where.origin + where.pathname;
+  }
+  function emptyLedger(key) {
+    return { version: 1, key, nextBatch: 1, rows: {}, batches: [] };
+  }
+  function owns(object, name) {
+    return Object.prototype.hasOwnProperty.call(object, name);
+  }
+  function putRow(rows, id, row2) {
+    Object.defineProperty(rows, id, { value: row2, enumerable: true, writable: true, configurable: true });
+  }
+  function isStatus(value) {
+    return value === "confirmed" || value === "unconfirmed";
+  }
+  function heldRow(ledger, id) {
+    return ledger && ledger.rows && owns(ledger.rows, id) ? ledger.rows[id] : null;
+  }
+  function wholeNumber(value, fallback) {
+    const number = Number(value);
+    return Number.isFinite(number) && number >= 1 ? Math.floor(number) : fallback;
+  }
+  function readLedger(storage, key) {
+    const ledger = emptyLedger(key);
+    let raw = null;
+    try {
+      raw = storage ? storage.getItem(key) : null;
+    } catch {
+      raw = null;
+    }
+    if (typeof raw !== "string" || !raw) return ledger;
+    let held = null;
+    try {
+      held = JSON.parse(raw);
+    } catch {
+      held = null;
+    }
+    if (!held || typeof held !== "object" || Array.isArray(held) || !held.rows || typeof held.rows !== "object" || Array.isArray(held.rows)) {
+      return ledger;
+    }
+    for (const id of Object.keys(held.rows)) {
+      const row2 = held.rows[id];
+      if (row2 && typeof row2 === "object" && isStatus(row2.status)) putRow(ledger.rows, id, row2);
+    }
+    ledger.nextBatch = wholeNumber(held.nextBatch, 1);
+    if (Array.isArray(held.batches)) {
+      ledger.batches = held.batches.filter((record) => record !== null && typeof record === "object");
+    }
+    return ledger;
+  }
+  function writeLedger(storage, key, ledger) {
+    try {
+      if (!storage) return false;
+      storage.setItem(key, JSON.stringify(ledger));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  function betterRow(held, other) {
+    if (!held) return other;
+    if (!other) return held;
+    const rank = (row2) => row2.status === "confirmed" ? 1 : 0;
+    if (rank(held) !== rank(other)) return rank(held) > rank(other) ? held : other;
+    return String(other.at) > String(held.at) ? other : held;
+  }
+  function mergeLedgers(one, two) {
+    const merged = emptyLedger(one.key || two.key);
+    merged.nextBatch = Math.max(wholeNumber(one.nextBatch, 1), wholeNumber(two.nextBatch, 1));
+    for (const ledger of [one, two]) {
+      for (const id of Object.keys(ledger.rows)) {
+        putRow(merged.rows, id, betterRow(heldRow(merged, id), ledger.rows[id]));
+      }
+    }
+    const records = /* @__PURE__ */ new Map();
+    for (const ledger of [one, two]) {
+      for (const record of ledger.batches) {
+        const name = record.batch + " " + record.at;
+        const held = records.get(name);
+        if (!held) records.set(name, record);
+        else if (record.late && !held.late) records.set(name, Object.assign({}, held, { late: record.late }));
+      }
+    }
+    merged.batches = Array.from(records.values()).sort((a, b) => {
+      const first = String(a.at);
+      const second = String(b.at);
+      return Number(a.batch) - Number(b.batch) || (first < second ? -1 : first > second ? 1 : 0);
+    });
+    if (merged.batches.length > MAX_BATCH_RECORDS) merged.batches = merged.batches.slice(-MAX_BATCH_RECORDS);
+    return merged;
+  }
+  function recordBatch(ledger, identities, batch2, status, at, details) {
+    if (!isStatus(status)) throw new Error(`a batch is confirmed or unconfirmed, not "${status}"`);
+    const extra = details || {};
+    for (const each of identities) {
+      const held = heldRow(ledger, each.id);
+      if (held && held.status === "confirmed" && status !== "confirmed") continue;
+      putRow(ledger.rows, each.id, {
+        title: each.title,
+        format: each.format,
+        size: each.size,
+        where: extra.where || "",
+        batch: batch2,
+        at,
+        status,
+        tries: (held ? wholeNumber(held.tries, 1) : 0) + 1
+      });
+    }
+    ledger.batches.push({
+      batch: batch2,
+      at,
+      status,
+      rows: identities.length,
+      mode: extra.mode || "",
+      waited: typeof extra.waited === "number" ? extra.waited : null,
+      evidence: extra.evidence || "",
+      reason: extra.reason || ""
+    });
+    if (ledger.batches.length > MAX_BATCH_RECORDS) {
+      ledger.batches.splice(0, ledger.batches.length - MAX_BATCH_RECORDS);
+    }
+    if (wholeNumber(ledger.nextBatch, 1) <= batch2) ledger.nextBatch = batch2 + 1;
+    return ledger;
+  }
+  function noteLate(ledger, batch2, description, at) {
+    let marked = false;
+    for (const record of ledger.batches) {
+      if (record.batch === batch2 && record.status === "unconfirmed" && !record.late) {
+        record.late = { at, evidence: String(description || "") };
+        marked = true;
+      }
+    }
+    return marked;
+  }
+  function openStore(storage, key) {
+    let memory = readLedger(storage, key);
+    let saved = true;
+    const fresh = () => {
+      memory = mergeLedgers(readLedger(storage, key), memory);
+      return memory;
+    };
+    const save = () => {
+      saved = writeLedger(storage, key, memory);
+      return saved;
+    };
+    return {
+      key,
+      read: fresh,
+      nextBatch() {
+        fresh();
+        const batch2 = wholeNumber(memory.nextBatch, 1);
+        memory.nextBatch = batch2 + 1;
+        save();
+        return batch2;
+      },
+      record(identities, batch2, status, at, details) {
+        fresh();
+        recordBatch(memory, identities, batch2, status, at, details);
+        save();
+        return memory;
+      },
+      noteLate(batch2, description, at) {
+        fresh();
+        const marked = noteLate(memory, batch2, description, at);
+        if (marked) save();
+        return marked;
+      },
+      saved: () => saved,
+      // Another tab still holding the ledger would write it back, so Reset is
+      // for one tab at a time.
+      forget() {
+        memory = emptyLedger(key);
+        saved = true;
+        if (!storage) return true;
+        try {
+          storage.removeItem(key);
+          return true;
+        } catch {
+          return false;
+        }
+      }
+    };
+  }
+  function chooseBatch(identities, ledger, size, mode) {
+    if (mode !== "fresh" && mode !== "retry") throw new Error(`a run is "fresh" or "retry", not "${mode}"`);
+    const asked = Math.floor(Number(size));
+    const limit = Number.isFinite(asked) && asked >= 1 ? asked : 1;
+    const out = [];
+    for (let at = 0; at < identities.length && out.length < limit; at++) {
+      const each = identities[at];
+      const held = heldRow(ledger, each.id);
+      if (held && held.status === "confirmed") continue;
+      if (mode === "fresh" && held) continue;
+      if (mode === "retry" && !held) continue;
+      out.push(each);
+    }
+    return out;
+  }
+  function pageCounts(identities, ledger) {
+    const counts = { rows: identities.length, todo: 0, confirmed: 0, unconfirmed: 0 };
+    for (const each of identities) {
+      const held = heldRow(ledger, each.id);
+      if (held && isStatus(held.status)) counts[held.status] += 1;
+      else counts.todo += 1;
+    }
+    return counts;
+  }
+  function ledgerCounts(ledger) {
+    const counts = { confirmed: 0, unconfirmed: 0 };
+    for (const id of Object.keys(ledger.rows)) {
+      const status = ledger.rows[id] && ledger.rows[id].status;
+      if (isStatus(status)) counts[status] += 1;
+    }
+    return counts;
+  }
+  function listLedgerKeys(storage, prefix) {
+    const keys = [];
+    try {
+      const count = storage ? storage.length : 0;
+      for (let at = 0; at < count; at++) {
+        const key = storage.key(at);
+        if (typeof key === "string" && key.indexOf(prefix) === 0) keys.push(key);
+      }
+    } catch {
+      return keys.sort();
+    }
+    return keys.sort();
+  }
+  function buildExport(ledgers, about) {
+    const meta = about || {};
+    const confirmed = [];
+    const unconfirmed = [];
+    for (const ledger of ledgers) {
+      const address = String(ledger.key || "").slice(LEDGER_PREFIX.length);
+      for (const id of Object.keys(ledger.rows)) {
+        const row2 = ledger.rows[id];
+        const line = {
+          title: String(row2.title || ""),
+          format: row2.format || "",
+          size: row2.size || "",
+          status: row2.status,
+          batch: row2.batch,
+          at: row2.at,
+          tries: row2.tries,
+          where: row2.where || "",
+          address,
+          id
+        };
+        if (row2.status === "confirmed") confirmed.push(line);
+        if (row2.status === "unconfirmed") unconfirmed.push(line);
+      }
+    }
+    const byTitle = (a, b) => {
+      if (a.title !== b.title) return a.title < b.title ? -1 : 1;
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    };
+    confirmed.sort(byTitle);
+    unconfirmed.sort(byTitle);
+    return {
+      exported: meta.at || "",
+      script: meta.script || "",
+      origin: meta.origin || "",
+      reading: 'Every document row the batch clicker has handled on this site. CONFIRMED means a file was seen handed over for its batch. UNCONFIRMED means its batch was pressed and no file was seen within the time allowed: fetch those again or look for them among the zips. "where" is the page of results it was on, and batch numbers match the ledgers below. "traces" holds, for each batch pressed since the page was opened, what the page and the browser did after the press, in milliseconds from it.',
+      totals: { confirmed: confirmed.length, unconfirmed: unconfirmed.length },
+      unconfirmed,
+      confirmed,
+      traces: meta.traces || {},
+      ledgers
+    };
+  }
+  function siteLedgers(storage, stores, prefix) {
+    const keys = listLedgerKeys(storage, prefix);
+    if (stores) stores.forEach((store, key) => {
+      if (keys.indexOf(key) < 0) keys.push(key);
+    });
+    return keys.map((key) => stores && stores.has(key) ? stores.get(key).read() : readLedger(storage, key));
+  }
+  function siteTotals(storage, stores, prefix) {
+    const ledgers = siteLedgers(storage, stores, prefix);
+    let documents = 0;
+    for (const ledger of ledgers) {
+      const counts = ledgerCounts(ledger);
+      documents += counts.confirmed + counts.unconfirmed;
+    }
+    return { ledgers: ledgers.length, documents };
+  }
+  function forgetSite(storage, stores, prefix) {
+    let cleared = true;
+    for (const key of listLedgerKeys(storage, prefix)) {
+      try {
+        storage.removeItem(key);
+      } catch {
+        cleared = false;
+      }
+    }
+    if (stores) stores.forEach((store) => {
+      if (!store.forget()) cleared = false;
+    });
+    return cleared;
+  }
+
+  // src/lib/batch/evidence.js
+  var FILE_TYPES = [
+    "application/zip",
+    "application/x-zip",
+    "application/x-zip-compressed",
+    "application/octet-stream",
+    "binary/octet-stream",
+    "application/pdf",
+    "application/x-pdf",
+    "application/force-download",
+    "application/x-download"
+  ];
+  function headersFromRaw(raw) {
+    const out = { contentType: "", disposition: "" };
+    for (const line of String(raw == null ? "" : raw).split(/\r?\n/)) {
+      const colon = line.indexOf(":");
+      if (colon <= 0) continue;
+      const name = line.slice(0, colon).trim().toLowerCase();
+      const value = line.slice(colon + 1).trim();
+      if (name === "content-type" && !out.contentType) out.contentType = value;
+      if (name === "content-disposition" && !out.disposition) out.disposition = value;
+    }
+    return out;
+  }
+  function isFileResponse(response) {
+    const head = response || {};
+    const status = typeof head.status === "number" ? head.status : Number(head.status);
+    if (!(Number.isInteger(status) && status >= 200 && status <= 299)) return false;
+    if (/^attachment\b/i.test(collapse(head.disposition))) return true;
+    const type = collapse(String(head.contentType == null ? "" : head.contentType).split(";")[0]).toLowerCase();
+    return FILE_TYPES.indexOf(type) >= 0;
+  }
+  function isFileEvidence(event) {
+    return !!event && (event.kind === "response" || event.kind === "incoming") && event.failed !== true && event.method !== "HEAD" && isFileResponse(event);
+  }
+  function countFromButtonText(text) {
+    const words = collapse(text);
+    const bracketed = words.match(/\(\s*(\d+)\s*\)/);
+    if (bracketed) return Number(bracketed[1]);
+    const bare = words.match(/\b(\d+)\b/);
+    return bare ? Number(bare[1]) : null;
+  }
+  function readSetting(text, fallback, least, most, whole) {
+    const value = parseFloat(String(text == null ? "" : text).trim());
+    if (!Number.isFinite(value)) return fallback;
+    const kept = whole ? Math.floor(value) : value;
+    return Math.min(most, Math.max(least, kept));
+  }
+  function shortUrl(url, base) {
+    const text = String(url == null ? "" : url);
+    if (/^blob:/i.test(text)) {
+      const inner = text.slice(5);
+      return "blob " + inner.slice(inner.lastIndexOf("/") + 1);
+    }
+    if (/^data:/i.test(text)) return "data";
+    let home = "";
+    try {
+      home = base ? new URL(String(base)).origin : "";
+    } catch {
+      home = "";
+    }
+    try {
+      const where = base ? new URL(text, String(base)) : new URL(text);
+      return ((where.origin === home ? "" : where.host) + where.pathname).slice(0, 120);
+    } catch {
+      return text.split(/[?#]/)[0].slice(0, 120);
+    }
+  }
+  function sinceLast(timing) {
+    if (!timing || typeof timing.gapSeconds !== "number") return "";
+    return timing.gapSeconds.toFixed(2) + "s after batch " + timing.after + (timing.handedOver ? " was handed over" : " ended");
+  }
+  function describeEvent(event, base) {
+    if (!event) return "";
+    if (event.kind === "response" || event.kind === "incoming") {
+      const said = [
+        event.kind === "incoming" ? "arriving:" : "done:",
+        event.via || "request",
+        event.method || "GET",
+        shortUrl(event.url, base),
+        String(event.status),
+        collapse(String(event.contentType || "").split(";")[0]) || "no type"
+      ];
+      if (/^attachment\b/i.test(collapse(event.disposition))) said.push("attachment");
+      if (event.failed) said.push("FAILED");
+      return said.join(" ");
+    }
+    if (event.kind === "blob") {
+      return "blob made, " + (event.type || "no type") + (typeof event.size === "number" ? ", " + event.size + " bytes" : "");
+    }
+    if (event.kind === "anchor") {
+      return "link clicked" + (event.via === "event" ? " (a click event)" : "") + ", " + shortUrl(event.href, base) + (event.download ? ", saving as " + event.download : "");
+    }
+    if (event.kind === "resource") {
+      const size = Math.max(Number(event.encodedBodySize) || 0, Number(event.transferSize) || 0);
+      return "resource: " + (event.initiatorType || "other") + " " + shortUrl(event.name, base) + ", " + (size ? size + " bytes" : "size unknown") + (event.contentType ? ", " + event.contentType : "") + (event.responseStatus ? ", status " + event.responseStatus : "");
+    }
+    if (event.kind === "blur") {
+      return "blur, the window lost focus" + (event.visible === false ? " (page hidden)" : "");
+    }
+    if (event.kind === "focus") {
+      return "focus, the window has it back" + (event.hasFocus === true ? "" : " (but document.hasFocus() says no)");
+    }
+    if (event.kind === "visibility") return "the page was " + (event.visible === false ? "hidden" : "shown again");
+    if (event.kind === "open") return "window.open " + shortUrl(event.url, base);
+    if (event.kind === "submit") {
+      return "form submitted, " + (event.method || "GET") + " " + shortUrl(event.url, base) + (event.via ? " (" + event.via + ")" : "");
+    }
+    if (event.kind === "iframe") return "frame given the address " + shortUrl(event.url, base);
+    if (event.kind === "unload") return "the page is about to unload";
+    if (event.kind === "button") {
+      return "button " + (event.disabled ? "disabled" : "enabled") + ', reads "' + collapse(event.text).slice(0, 40) + '"' + (event.attached === false ? ", no longer on the page" : "");
+    }
+    if (event.kind === "stop") return "Stop pressed";
+    if (event.kind === "timing") {
+      const parts = [];
+      const since = sinceLast(event);
+      if (since) parts.push("pressed " + since);
+      for (const [key, label] of [
+        ["settleMs", "settled for"],
+        ["untickMs", "unticked in"],
+        ["refreshMs", "counts redrawn in"],
+        ["readMs", "rows read in"],
+        ["takeMs", "ticked and checked in"],
+        ["quietMs", "page went quiet in"]
+      ]) {
+        if (typeof event[key] === "number") parts.push(label + " " + Math.round(event[key]) + " ms");
+      }
+      return "timing: " + parts.join(", ");
+    }
+    return "";
+  }
+  var RESOURCE_KINDS = ["fetch", "xmlhttprequest"];
+  var BIG_BODY = 1e5;
+  var SMALLEST_FILE = 1e4;
+  var NAMES_A_FILE = /download|archive|zip|pdf/i;
+  var NOT_A_FILE_TYPE = /json|html|xml|javascript|text\//i;
+  function isFileResource(event, pressedAt) {
+    if (!event || RESOURCE_KINDS.indexOf(String(event.initiatorType)) < 0) return false;
+    if (typeof event.started !== "number" || !(event.started >= pressedAt)) return false;
+    const status = Number(event.responseStatus) || 0;
+    if (status && !(status >= 200 && status <= 299)) return false;
+    if (NOT_A_FILE_TYPE.test(String(event.contentType || ""))) return false;
+    const body = Math.max(Number(event.encodedBodySize) || 0, Number(event.transferSize) || 0);
+    if (body > BIG_BODY) return true;
+    if (body > 0 && body < SMALLEST_FILE) return false;
+    return NAMES_A_FILE.test(String(event.name || ""));
+  }
+  function resourceEvent(entry, pressPerf, pressedAt) {
+    const place = (time) => {
+      const number = Number(time);
+      return Number.isFinite(number) ? pressedAt + (number - pressPerf) : NaN;
+    };
+    const end = Number(entry.responseEnd) > 0 ? entry.responseEnd : Number(entry.startTime) + Number(entry.duration);
+    return {
+      kind: "resource",
+      name: String(entry.name || ""),
+      initiatorType: String(entry.initiatorType || ""),
+      started: place(entry.startTime),
+      at: place(end),
+      encodedBodySize: Number(entry.encodedBodySize) || 0,
+      transferSize: Number(entry.transferSize) || 0,
+      contentType: String(entry.contentType || ""),
+      responseStatus: Number(entry.responseStatus) || 0
+    };
+  }
+  function traceLine(event, start) {
+    const text = describeEvent(event);
+    if (!text) return "";
+    if (!Number.isFinite(event.at) || !Number.isFinite(start)) return "+?ms " + text;
+    const ms = Math.round(event.at - start);
+    return (ms >= 0 ? "+" : "") + ms + "ms " + text;
+  }
+  function createTracer(limit) {
+    const asked = Math.floor(Number(limit));
+    const cap = Number.isFinite(asked) && asked >= 1 ? asked : 300;
+    const traces = {};
+    let batch2 = null;
+    let start = NaN;
+    return {
+      start(number, at) {
+        batch2 = String(number);
+        start = at;
+        traces[batch2] = [];
+      },
+      note(event) {
+        if (batch2 === null || !event || event.kind === "clock") return;
+        const list = traces[batch2];
+        if (list.length >= cap) return;
+        const line = traceLine(event, start);
+        if (line) list.push(line);
+      },
+      all() {
+        const copy = {};
+        for (const key of Object.keys(traces)) copy[key] = traces[key].slice();
+        return copy;
+      }
+    };
+  }
+  function isLoadMoreText(text) {
+    const words = collapse(text);
+    return words.length > 0 && words.length <= 40 && /^(load|show|view|see)\s+more\b/i.test(words);
+  }
+  async function waitForGrowth(count, before, sleep2, now, ceilingMs, halted) {
+    const until = now() + ceilingMs;
+    for (; ; ) {
+      const seen = count();
+      if (seen > before) return { grew: true, after: seen };
+      if (now() >= until || typeof halted === "function" && halted()) return { grew: false, after: seen };
+      await sleep2(0.25);
+    }
+  }
+  var QUIET_MS = 1e3;
+  var QUIET_CAP_MS = 6e3;
+  var QUIET_POLL = 0.05;
+  async function waitForQuiet(lastChange, since, now, sleep2, quietMs, capMs, halted) {
+    const start = now();
+    for (; ; ) {
+      const at = now();
+      if (typeof halted === "function" && halted()) return { quiet: false, halted: true, waitedMs: at - start };
+      const last = Math.max(Number(lastChange()) || 0, since);
+      if (at - last >= quietMs) return { quiet: true, halted: false, waitedMs: at - start };
+      if (at - start >= capMs) return { quiet: false, halted: false, waitedMs: at - start };
+      await sleep2(QUIET_POLL);
+    }
+  }
+  function newWatch(batch2, pressedAt, timeoutMs) {
+    return {
+      batch: batch2,
+      pressedAt,
+      deadline: pressedAt + timeoutMs,
+      status: "waiting",
+      blobs: [],
+      ambiguous: false,
+      away: false,
+      evidence: "",
+      reason: "",
+      decidedAt: null
+    };
+  }
+  function decide(watch, status, reason, evidence, at) {
+    return Object.assign({}, watch, { status, reason, evidence, decidedAt: at });
+  }
+  function observe(watch, event) {
+    if (!watch || watch.status !== "waiting" || !event) return watch;
+    if (event.kind === "stop") return decide(watch, "unconfirmed", "stopped", "", event.at);
+    const at = event.at;
+    if (typeof at !== "number" || !Number.isFinite(at)) return watch;
+    if (at >= watch.deadline) return decide(watch, "unconfirmed", "timeout", "", watch.deadline);
+    if (at < watch.pressedAt) return watch;
+    if (event.kind === "response" || event.kind === "incoming") {
+      if (!isFileEvidence(event)) return watch;
+      if (event.batch === watch.batch) {
+        return event.kind === "response" ? decide(watch, "confirmed", "", describeEvent(event), at) : watch;
+      }
+      if (event.batch !== null && event.batch !== void 0) return Object.assign({}, watch, { ambiguous: true });
+      return watch;
+    }
+    if (event.kind === "blob") {
+      if (watch.ambiguous || typeof event.url !== "string") return watch;
+      return Object.assign({}, watch, { blobs: watch.blobs.concat([event.url]) });
+    }
+    if (event.kind === "blur") return event.visible === false ? watch : Object.assign({}, watch, { away: true });
+    if (event.kind === "visibility") return event.visible === false ? Object.assign({}, watch, { away: false }) : watch;
+    if (event.kind === "focus") {
+      if (watch.away && event.hasFocus === true) {
+        return decide(watch, "confirmed", "", "the browser window lost focus and got it back after the press: a Save window opened and closed", at);
+      }
+      return watch;
+    }
+    if (event.kind === "resource") {
+      return isFileResource(event, watch.pressedAt) ? decide(watch, "confirmed", "", describeEvent(event), at) : watch;
+    }
+    if (event.kind === "anchor") {
+      if (!watch.ambiguous && watch.blobs.indexOf(String(event.href)) >= 0) {
+        return decide(watch, "confirmed", "", "a blob was made and a link to it clicked" + (event.download ? ", saving as " + event.download : ""), at);
+      }
+      return watch;
+    }
+    return watch;
+  }
+
+  // src/lib/batch/wrappers.js
+  function methodOf(input, init) {
+    const named = init && init.method || input && typeof input === "object" && input.method || "GET";
+    return String(named).toUpperCase();
+  }
+  function urlOf(input) {
+    if (typeof input === "string") return input;
+    if (input && typeof input.url === "string") return input.url;
+    return String(input);
+  }
+  function headerOf(response, name) {
+    try {
+      const headers = response && response.headers;
+      const value = headers && typeof headers.get === "function" ? headers.get(name) : null;
+      return value == null ? "" : String(value);
+    } catch {
+      return "";
+    }
+  }
+  function drainCopy(response, finished) {
+    let reader = null;
+    try {
+      const copy = response.clone();
+      const body = copy && copy.body;
+      if (!body || typeof body.getReader !== "function") {
+        finished(null);
+        return;
+      }
+      reader = body.getReader();
+    } catch (error) {
+      finished(error);
+      return;
+    }
+    const pump = () => {
+      try {
+        reader.read().then(
+          (step) => {
+            if (step && step.done) finished(null);
+            else pump();
+          },
+          (error) => finished(error || new Error("the download broke off"))
+        );
+      } catch (error) {
+        finished(error);
+      }
+    };
+    pump();
+  }
+  function sameShape(wrapper, original) {
+    try {
+      Object.defineProperty(wrapper, "length", { value: original.length });
+    } catch {
+    }
+    return wrapper;
+  }
+  function installWrappers(scope, sink) {
+    const done = { fetch: false, xhr: false, blob: false, anchor: false };
+    if (!scope || !sink) return done;
+    const tagNow = () => {
+      try {
+        const tag2 = sink.tag();
+        return typeof tag2 === "number" && Number.isFinite(tag2) ? tag2 : null;
+      } catch {
+        return null;
+      }
+    };
+    const timeNow = () => {
+      try {
+        return sink.now();
+      } catch {
+        return NaN;
+      }
+    };
+    const baseNow = () => {
+      try {
+        return String(sink.base() || "");
+      } catch {
+        return "";
+      }
+    };
+    const tell = (event) => {
+      try {
+        sink.note(event);
+      } catch {
+      }
+    };
+    function followFetch(result, request) {
+      if (!result || typeof result.then !== "function") return;
+      const after = result.then((response) => {
+        try {
+          const event = {
+            kind: "response",
+            via: "fetch",
+            batch: request.tag,
+            method: request.method,
+            url: request.url,
+            status: response && typeof response.status === "number" ? response.status : 0,
+            contentType: headerOf(response, "content-type"),
+            disposition: headerOf(response, "content-disposition"),
+            at: NaN,
+            failed: false
+          };
+          if (!isFileResponse(event)) {
+            event.at = timeNow();
+            tell(event);
+            return;
+          }
+          tell(Object.assign({}, event, { kind: "incoming", at: timeNow() }));
+          drainCopy(response, (error) => {
+            event.at = timeNow();
+            event.failed = !!error;
+            tell(event);
+          });
+        } catch {
+        }
+      }, () => {
+        tell({
+          kind: "response",
+          via: "fetch",
+          batch: request.tag,
+          method: request.method,
+          url: request.url,
+          status: 0,
+          contentType: "",
+          disposition: "",
+          at: timeNow(),
+          failed: true
+        });
+      });
+      if (after && typeof after.catch === "function") after.catch(() => {
+      });
+    }
+    try {
+      const originalFetch = scope.fetch;
+      if (typeof originalFetch === "function") {
+        scope.fetch = sameShape(function fetch(input, init) {
+          let request = null;
+          try {
+            const tag2 = tagNow();
+            if (tag2 !== null) request = { tag: tag2, method: methodOf(input, init), url: shortUrl(urlOf(input), baseNow()) };
+          } catch {
+            request = null;
+          }
+          const result = originalFetch.apply(this, arguments);
+          if (request) {
+            try {
+              followFetch(result, request);
+            } catch {
+            }
+          }
+          return result;
+        }, originalFetch);
+        done.fetch = true;
+      }
+    } catch {
+      done.fetch = false;
+    }
+    function xhrEvent(xhr, request, kind) {
+      let raw = "";
+      try {
+        raw = xhr.getAllResponseHeaders() || "";
+      } catch {
+        raw = "";
+      }
+      const head = headersFromRaw(raw);
+      const status = typeof xhr.status === "number" ? xhr.status : 0;
+      let address = request.url;
+      try {
+        if (xhr.responseURL) address = String(xhr.responseURL);
+      } catch {
+        address = request.url;
+      }
+      return {
+        kind,
+        via: "xhr",
+        batch: request.tag,
+        method: request.method,
+        url: shortUrl(address, baseNow()),
+        status,
+        contentType: head.contentType,
+        disposition: head.disposition,
+        at: timeNow(),
+        failed: kind === "response" && status === 0
+      };
+    }
+    function xhrStep(xhr, request) {
+      if (request.tag === null || request.finished) return;
+      const state = xhr.readyState;
+      if (state >= 2 && !request.announced) {
+        request.announced = true;
+        const arriving = xhrEvent(xhr, request, "incoming");
+        if (isFileResponse(arriving)) tell(arriving);
+      }
+      if (state === 4) {
+        request.finished = true;
+        tell(xhrEvent(xhr, request, "response"));
+      }
+    }
+    function listen(xhr, request) {
+      if (request.listening || typeof xhr.addEventListener !== "function") return;
+      request.listening = true;
+      xhr.addEventListener("readystatechange", () => {
+        try {
+          xhrStep(xhr, request);
+        } catch {
+        }
+      });
+    }
+    try {
+      const XHR = scope.XMLHttpRequest;
+      const proto = XHR && XHR.prototype;
+      const originalOpen = proto && proto.open;
+      const originalSend = proto && proto.send;
+      if (typeof originalOpen === "function" && typeof originalSend === "function") {
+        const requests = /* @__PURE__ */ new WeakMap();
+        proto.open = sameShape(function open(method, url) {
+          try {
+            const request = {
+              method: String(method || "GET").toUpperCase(),
+              url: String(url),
+              tag: null,
+              announced: false,
+              finished: false,
+              listening: false
+            };
+            requests.set(this, request);
+            if (tagNow() !== null) listen(this, request);
+          } catch {
+          }
+          return originalOpen.apply(this, arguments);
+        }, originalOpen);
+        proto.send = sameShape(function send() {
+          try {
+            const tag2 = tagNow();
+            const request = requests.get(this);
+            if (tag2 !== null && request) {
+              request.tag = tag2;
+              listen(this, request);
+            }
+          } catch {
+          }
+          return originalSend.apply(this, arguments);
+        }, originalSend);
+        done.xhr = true;
+      }
+    } catch {
+      done.xhr = false;
+    }
+    try {
+      const Addresses = scope.URL;
+      const originalCreate = Addresses && Addresses.createObjectURL;
+      if (typeof originalCreate === "function") {
+        Addresses.createObjectURL = sameShape(function createObjectURL(object) {
+          const made = originalCreate.apply(this, arguments);
+          try {
+            const tag2 = tagNow();
+            if (tag2 !== null) {
+              tell({
+                kind: "blob",
+                at: timeNow(),
+                batch: tag2,
+                url: String(made),
+                type: object && typeof object.type === "string" ? object.type : "",
+                size: object && typeof object.size === "number" ? object.size : null
+              });
+            }
+          } catch {
+          }
+          return made;
+        }, originalCreate);
+        done.blob = true;
+      }
+    } catch {
+      done.blob = false;
+    }
+    try {
+      const Anchor = scope.HTMLAnchorElement;
+      const proto = Anchor && Anchor.prototype;
+      const originalClick = proto && proto.click;
+      if (typeof originalClick === "function") {
+        proto.click = sameShape(function click() {
+          try {
+            const tag2 = tagNow();
+            if (tag2 !== null) {
+              tell({
+                kind: "anchor",
+                at: timeNow(),
+                batch: tag2,
+                href: String(this.href || ""),
+                download: typeof this.getAttribute === "function" ? String(this.getAttribute("download") || "") : ""
+              });
+            }
+          } catch {
+          }
+          return originalClick.apply(this, arguments);
+        }, originalClick);
+        done.anchor = true;
+      }
+    } catch {
+      done.anchor = false;
+    }
+    return done;
+  }
+  function installStartWrappers(scope, sink) {
+    const done = { open: false, submit: false, frame: false };
+    if (!scope || !sink) return done;
+    const report = (kind, details) => {
+      try {
+        const waiting = sink.tag();
+        if (typeof waiting !== "number" || !Number.isFinite(waiting)) return;
+        let when = NaN;
+        try {
+          when = sink.now();
+        } catch {
+          when = NaN;
+        }
+        sink.note(Object.assign({ kind, at: when, batch: waiting }, details));
+      } catch {
+      }
+    };
+    try {
+      const originalOpen = scope.open;
+      if (typeof originalOpen === "function") {
+        scope.open = sameShape(function open(url) {
+          report("open", { url: String(url == null ? "" : url) });
+          return originalOpen.apply(this, arguments);
+        }, originalOpen);
+        done.open = true;
+      }
+    } catch {
+      done.open = false;
+    }
+    try {
+      const Form = scope.HTMLFormElement;
+      const formProto = Form && Form.prototype;
+      for (const name of ["submit", "requestSubmit"]) {
+        const original = formProto && formProto[name];
+        if (typeof original !== "function") continue;
+        formProto[name] = sameShape(function() {
+          report("submit", { url: String(this.action || ""), method: String(this.method || "get").toUpperCase(), via: name });
+          return original.apply(this, arguments);
+        }, original);
+        done.submit = true;
+      }
+    } catch {
+    }
+    try {
+      const Frame = scope.HTMLIFrameElement;
+      const frameProto = Frame && Frame.prototype;
+      const held = frameProto && Object.getOwnPropertyDescriptor(frameProto, "src");
+      if (held && typeof held.set === "function" && held.configurable) {
+        Object.defineProperty(frameProto, "src", {
+          get: held.get,
+          set(value) {
+            report("iframe", { url: String(value) });
+            return held.set.call(this, value);
+          },
+          configurable: true,
+          enumerable: held.enumerable
+        });
+        done.frame = true;
+      }
+      const originalSet = frameProto && frameProto.setAttribute;
+      if (typeof originalSet === "function") {
+        frameProto.setAttribute = sameShape(function setAttribute(name, value) {
+          if (String(name).toLowerCase() === "src") report("iframe", { url: String(value) });
+          return originalSet.apply(this, arguments);
+        }, originalSet);
+        done.frame = true;
+      }
+    } catch {
+    }
+    return done;
+  }
+
+  // src/lib/batch/settings.js
+  function origin(href) {
+    return new URL(String(href)).origin;
+  }
+  function readRaw(storage, key) {
+    try {
+      return storage ? storage.getItem(key) : null;
+    } catch {
+      return null;
+    }
+  }
+  function writeRaw(storage, key, value) {
+    try {
+      if (!storage) return false;
+      if (value === null) storage.removeItem(key);
+      else storage.setItem(key, value);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  function readJson(storage, key) {
+    const raw = readRaw(storage, key);
+    try {
+      return typeof raw === "string" && raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  }
+  var START_PREFIX = "qs-intelligence start row ";
+  var startKey = (href) => START_PREFIX + origin(href);
+  function readStart(storage, key) {
+    const raw = readRaw(storage, key);
+    return wholeNumber(raw === null || raw === "" ? NaN : raw, 1);
+  }
+  function writeStart(storage, key, value) {
+    return writeRaw(storage, key, String(wholeNumber(value, 1)));
+  }
+  var FORMATS_PREFIX = "qs-intelligence file types ";
+  var ONE_FORMAT = new RegExp("^" + LOOKS_LIKE_A_FILE.source + "$", "i");
+  var formatsKey = (href) => FORMATS_PREFIX + origin(href);
+  function wantsFormat(chosen, format) {
+    if (!Array.isArray(chosen)) return true;
+    return chosen.indexOf(String(format == null ? "" : format).toUpperCase()) >= 0;
+  }
+  function formatCounts(identities) {
+    const counts = /* @__PURE__ */ new Map();
+    for (const each of identities || []) {
+      const format = String(each && each.format || "").toUpperCase();
+      if (format) counts.set(format, (counts.get(format) || 0) + 1);
+    }
+    return Array.from(counts, ([format, rows]) => ({ format, rows })).sort((a, b) => b.rows - a.rows || (a.format < b.format ? -1 : a.format > b.format ? 1 : 0));
+  }
+  function toggleFormat(chosen, format, shown) {
+    const name = String(format == null ? "" : format).toUpperCase();
+    const types = (shown || []).map((each) => String(each).toUpperCase());
+    const next = Array.isArray(chosen) ? chosen.slice() : types.slice();
+    const at = next.indexOf(name);
+    if (at >= 0) next.splice(at, 1);
+    else next.push(name);
+    const every = types.length > 0 && types.every((each) => next.indexOf(each) >= 0);
+    return every ? null : next;
+  }
+  function andList(list) {
+    if (list.length <= 1) return list.join("");
+    return list.slice(0, -1).join(", ") + " and " + list[list.length - 1];
+  }
+  function describeFormats(chosen) {
+    if (!Array.isArray(chosen)) return "Every file type.";
+    if (!chosen.length) return "No file type switched on.";
+    return "Only " + andList(chosen) + ".";
+  }
+  function readFormats(storage, key) {
+    const held = readJson(storage, key);
+    if (!Array.isArray(held)) return null;
+    const out = [];
+    for (const each of held) {
+      if (typeof each !== "string" || !ONE_FORMAT.test(each)) continue;
+      const name = each.toUpperCase();
+      if (out.indexOf(name) < 0) out.push(name);
+    }
+    return out;
+  }
+  function writeFormats(storage, key, chosen) {
+    return writeRaw(storage, key, Array.isArray(chosen) ? JSON.stringify(chosen) : null);
+  }
+  var ZIP_AUTO_PREFIX = "qs-intelligence zip auto ";
+  var ZIP_AUTO_HOURS = 2;
+  var zipAutoKey = (href) => ZIP_AUTO_PREFIX + origin(href);
+  function readZipAuto(storage, key, now) {
+    const raw = readRaw(storage, key);
+    const since = Number(raw);
+    return raw !== null && Number.isFinite(since) && since > 0 && now >= since && now - since < ZIP_AUTO_HOURS * 36e5;
+  }
+  function writeZipAuto(storage, key, on, now) {
+    return writeRaw(storage, key, on ? String(now) : null);
+  }
+  var ZIP_LIMIT_PREFIX = "qs-intelligence zip limit ";
+  var DEFAULT_ZIP_LIMIT = 50;
+  var zipLimitKey = (href) => ZIP_LIMIT_PREFIX + origin(href);
+  function readZipLimit(storage, key) {
+    const raw = readRaw(storage, key);
+    return wholeNumber(raw === null || raw === "" ? NaN : raw, DEFAULT_ZIP_LIMIT);
+  }
+  function writeZipLimit(storage, key, value) {
+    return writeRaw(storage, key, String(wholeNumber(value, DEFAULT_ZIP_LIMIT)));
+  }
+  var BUTTON_PREFIX = "qs-intelligence download button ";
+  var buttonKey = (href) => BUTTON_PREFIX + origin(href);
+  var wholeChain = (chain) => Array.isArray(chain) && chain.length > 0 && chain.every((segment) => segment && typeof segment.tag === "string" && segment.tag && Array.isArray(segment.classes));
+  function readButtonRecord(storage, key) {
+    const held = readJson(storage, key);
+    if (!held || typeof held !== "object" || Array.isArray(held) || typeof held.words !== "string" || !held.words || !wholeChain(held.chain)) {
+      return null;
+    }
+    return held;
+  }
+  function writeButtonRecord(storage, key, record) {
+    return writeRaw(storage, key, record ? JSON.stringify(record) : null);
+  }
+  var TARGET_PREFIX = "pz-batch item ";
+  var targetKey = (href) => TARGET_PREFIX + origin(href);
+  function readTargetRecord(storage, key) {
+    const held = readJson(storage, key);
+    if (!held || typeof held !== "object" || Array.isArray(held) || held.kind !== "box" && held.kind !== "button" || typeof held.tag !== "string" || !held.tag || !wholeChain(held.chain)) {
+      return null;
+    }
+    return held;
+  }
+  function writeTargetRecord(storage, key, record) {
+    return writeRaw(storage, key, record ? JSON.stringify(record) : null);
+  }
+
+  // src/lib/batch/target.js
+  var SAFE_NAME = /^[A-Za-z_][A-Za-z0-9_-]*$/;
+  var STATE_CLASS = /(^|[-_])(is|has)[-_]|active|checked|selected|disabled|hover|focus|open|added|current|loading|ticked|visited/i;
+  function labelOf(node) {
+    if (!node) return "";
+    const named = typeof node.getAttribute === "function" ? node.getAttribute("aria-label") || node.getAttribute("title") : "";
+    const shown = typeof node.innerText === "string" ? node.innerText : node.textContent;
+    return collapse(shown || node.value || named || "");
+  }
+  function buttonWords(text) {
+    return collapse(String(text == null ? "" : text).replace(/[\d()[\]{}:]+/g, " ")).toLowerCase();
+  }
+  function classesOf(node) {
+    const raw = typeof node.className === "string" ? node.className : typeof node.getAttribute === "function" ? node.getAttribute("class") || "" : "";
+    return raw.split(/\s+/).filter((name) => SAFE_NAME.test(name) && !/\d/.test(name));
+  }
+  function segmentOf(node, dropState = false) {
+    const tag2 = String(node.tagName || "").toLowerCase();
+    const id = typeof node.id === "string" && SAFE_NAME.test(node.id) && !/\d/.test(node.id) ? node.id : "";
+    let classes = classesOf(node);
+    if (dropState) classes = classes.filter((name) => !STATE_CLASS.test(name));
+    return { tag: tag2, id, classes: classes.slice(0, 3) };
+  }
+  function chainOf(node, dropState = false) {
+    const chain = [];
+    for (let at = node; at && chain.length < 4; at = at.parentElement) {
+      const segment = segmentOf(at, dropState);
+      if (!segment.tag || segment.tag === "body" || segment.tag === "html") break;
+      chain.push(segment);
+      if (segment.id) break;
+    }
+    return chain;
+  }
+  function pathOf(chain) {
+    return chain.slice().reverse().map(
+      (segment) => segment.tag + (segment.id ? "#" + segment.id : "") + segment.classes.map((name) => "." + name).join("")
+    ).join(" > ");
+  }
+  function describeButton(node) {
+    const text = labelOf(node);
+    const chain = chainOf(node);
+    return { words: buttonWords(text), text: text.slice(0, 60), path: pathOf(chain), chain };
+  }
+  function chainScore(node, chain) {
+    let score = 0;
+    let at = node;
+    for (let level = 0; level < chain.length && at; level++) {
+      const want = chain[level];
+      const have = segmentOf(at);
+      if (have.tag !== want.tag || want.id && have.id !== want.id) return level === 0 ? -1 : score;
+      score += 1 + have.classes.filter((name) => want.classes.indexOf(name) >= 0).length;
+      at = at.parentElement;
+    }
+    return score;
+  }
+  function locateButton(record, candidates, usable) {
+    if (!record || !record.words || !Array.isArray(record.chain) || !record.chain.length) return null;
+    let best = null;
+    let bestScore = -1;
+    for (const node of candidates || []) {
+      if (!node || typeof usable === "function" && !usable(node)) continue;
+      if (buttonWords(labelOf(node)) !== record.words) continue;
+      const score = chainScore(node, record.chain);
+      if (score > bestScore) {
+        best = node;
+        bestScore = score;
+      }
+    }
+    return best;
+  }
+  function pickButton(record, locate, automatic) {
+    if (record) {
+      const found = locate(record);
+      if (found) return { button: found, source: "selected", lost: false };
+    }
+    const fallback = automatic() || null;
+    return { button: fallback, source: fallback ? "automatic" : "none", lost: !!record };
+  }
+  function describeUse(use, text) {
+    const named = text ? ' "' + collapse(text).slice(0, 30) + '"' : "";
+    if (use && use.source === "selected") return "Download button: yours" + named + ".";
+    if (use && use.source === "automatic") {
+      return (use.lost ? "Your download button isn't here; using" : "Download button: found") + named + ".";
+    }
+    return (use && use.lost ? "Your download button isn't here." : "No download button found.") + " Pick it with \u2B07.";
+  }
+  var BOX_LIKE = 'input[type="checkbox"], [role="checkbox"], [role="switch"], [aria-checked]';
+  var BUTTON_LIKE = 'button, a[href], [role="button"], input[type="button"], input[type="submit"]';
+  var LOOSE_CLICKABLE = '[onclick], [class*="btn"], [class*="button"]';
+  var BOX_CLASS = '[class*="check"], [class*="tick"], [class*="toggle"], [class*="switch"]';
+  function resolveTarget(el) {
+    if (!el || el.nodeType !== 1 || typeof el.closest !== "function") return null;
+    const label = el.closest("label");
+    const control2 = label && label.control;
+    if (control2 && String(control2.type).toLowerCase() === "checkbox") return { node: control2, kind: "box" };
+    const box = el.closest(BOX_LIKE);
+    if (box) return { node: box, kind: "box" };
+    const button2 = el.closest(BUTTON_LIKE);
+    if (button2) return { node: button2, kind: "button" };
+    for (let at = el, step = 0; at && step < 3; at = at.parentElement, step++) {
+      const inside = typeof at.querySelectorAll === "function" ? at.querySelectorAll('input[type="checkbox"]') : [];
+      if (inside.length === 1) return { node: inside[0], kind: "box" };
+      if (inside.length > 1) break;
+    }
+    const drawn = el.closest(BOX_CLASS);
+    if (drawn && collapse(drawn.textContent).length <= 40) return { node: drawn, kind: "box" };
+    return { node: el.closest(LOOSE_CLICKABLE) || el, kind: "button" };
+  }
+  function describeTarget(node, kind) {
+    const tag2 = String(node.tagName || "").toLowerCase();
+    const type = tag2 === "input" ? String(node.type || "").toLowerCase() : "";
+    const role = typeof node.getAttribute === "function" ? node.getAttribute("role") || "" : "";
+    const href = tag2 === "a" && typeof node.getAttribute === "function" ? node.getAttribute("href") || "" : "";
+    return {
+      kind,
+      tag: tag2,
+      type,
+      role,
+      chain: chainOf(node, true),
+      words: kind === "button" ? buttonWords(labelOf(node)) : "",
+      // A plain link with no download attribute may take the page away.
+      link: kind === "button" && !!href && !/^(#|javascript:)/i.test(href) && node.getAttribute("download") === null && node.getAttribute("target") !== "_blank"
+    };
+  }
+  function matchesTarget(node, record) {
+    if (!node || !record || node.nodeType !== 1) return false;
+    if (String(node.tagName || "").toLowerCase() !== record.tag) return false;
+    if (record.type && String(node.type || "").toLowerCase() !== record.type) return false;
+    if (record.role && (node.getAttribute("role") || "") !== record.role) return false;
+    let at = node;
+    for (const want of record.chain) {
+      if (!at) return false;
+      const tag2 = String(at.tagName || "").toLowerCase();
+      if (tag2 !== want.tag) return false;
+      if (want.id && at.id !== want.id) return false;
+      if (want.classes.length) {
+        const have = classesOf(at);
+        if (!want.classes.some((name) => have.indexOf(name) >= 0)) return false;
+      }
+      at = at.parentElement;
+    }
+    return true;
+  }
+  var SWALLOWED = ["pointerdown", "mousedown", "pointerup", "mouseup"];
+  function armCapture(target, isOurs, picked) {
+    let armed = true;
+    const ours = (event) => {
+      try {
+        return !!isOurs(event.target);
+      } catch {
+        return false;
+      }
+    };
+    const hold = (event) => {
+      if (!event) return;
+      try {
+        event.preventDefault();
+      } catch {
+      }
+      try {
+        event.stopPropagation();
+      } catch {
+      }
+      try {
+        if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
+      } catch {
+      }
+    };
+    function swallow(event) {
+      if (!armed || !event || event.isTrusted !== true || ours(event)) return;
+      hold(event);
+    }
+    function listener(event) {
+      if (!armed || !event || event.isTrusted !== true || ours(event)) return;
+      disarm();
+      hold(event);
+      picked(event.target);
+    }
+    function disarm() {
+      if (!armed) return;
+      armed = false;
+      try {
+        target.removeEventListener("click", listener, true);
+        for (const type of SWALLOWED) target.removeEventListener(type, swallow, true);
+      } catch {
+      }
+    }
+    target.addEventListener("click", listener, true);
+    for (const type of SWALLOWED) target.addEventListener(type, swallow, true);
+    return disarm;
+  }
+
+  // src/lib/batch/selection.js
+  var SELECTION_WAIT = 5;
+  var SELECTION_POLL = 0.05;
+  function wordsOf(node) {
+    const shown = typeof node.innerText === "string" ? node.innerText : node.textContent;
+    return collapse(shown || node.value || "");
+  }
+  function findRow(chosen, live, sameBoxWillDo) {
+    let byText = null;
+    for (const each of live) {
+      if (each.identity.id !== chosen.identity.id) continue;
+      if (each.box === chosen.box) return each;
+      if (!byText) byText = each;
+    }
+    if (byText || !sameBoxWillDo) return byText;
+    for (const each of live) if (each.box === chosen.box) return each;
+    return null;
+  }
+  function isReady(button2) {
+    if (!button2 || button2.disabled === true) return false;
+    const said = typeof button2.getAttribute === "function" ? button2.getAttribute("aria-disabled") : null;
+    return said !== "true";
+  }
+  function setTicked(each, wanted) {
+    if (isTicked(each.box) !== wanted) clickBox(each.box);
+  }
+  function untickChosen(chosen, env) {
+    let live = null;
+    for (const each of chosen) {
+      if (each.box && each.box.isConnected !== false) {
+        setTicked(each, false);
+        continue;
+      }
+      if (!live) live = env.rows();
+      const found = findRow(each, live, true);
+      if (found) setTicked(found, false);
+    }
+  }
+  function selectionProblem(size, button2, count, missing, reclicked, strays) {
+    const said = [];
+    if (!button2) said.push("no download button (pick one with \u2B07)");
+    else if (!isReady(button2)) said.push("the download button stayed disabled");
+    if (count !== null && count !== size) {
+      said.push(`the button reads "${wordsOf(button2)}" for a batch of ${size}` + (count > size ? "; clear other ticks by hand" : ""));
+    }
+    if (missing) said.push(`${missing} row(s) gone`);
+    if (reclicked) said.push(`${reclicked} box(es) would not stay ticked`);
+    if (strays) said.push(`${strays} other box(es) ticked`);
+    return `The page did not take the selection: ${said.join("; ")}. Nothing pressed. Play to try again, or lower the batch size.`;
+  }
+  async function takeSelection(chosen, env) {
+    const halted = () => typeof env.halted === "function" && env.halted() === true;
+    let everyRow = null;
+    const allRows = () => {
+      if (!everyRow) everyRow = env.rows();
+      return everyRow;
+    };
+    const resolve = (each) => {
+      if (typeof env.locate === "function") {
+        const quick = env.locate(each);
+        if (quick) return quick;
+      }
+      return findRow(each, allRows(), false);
+    };
+    let problem = "";
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      everyRow = null;
+      for (const each of chosen) {
+        const found = resolve(each);
+        if (found) setTicked(found, true);
+      }
+      const until = env.now() + SELECTION_WAIT * 1e3;
+      for (; ; ) {
+        if (halted()) return { ok: false, halted: true, problem: "" };
+        everyRow = null;
+        const found = chosen.map(resolve);
+        const missing = found.filter((each) => !each).length;
+        let reclicked = 0;
+        for (const each of found) {
+          if (each && !isTicked(each.box)) {
+            clickBox(each.box);
+            reclicked++;
+          }
+        }
+        const ours = new Set(found.filter(Boolean).map((each) => each.box));
+        let strays = 0;
+        const ticked = typeof env.checked === "function" ? env.checked() : allRows().filter((each) => isTicked(each.box));
+        for (const each of ticked) {
+          if (isTicked(each.box) && !ours.has(each.box)) {
+            clickBox(each.box);
+            strays++;
+          }
+        }
+        const button2 = env.button(everyRow) || null;
+        const count = button2 ? countFromButtonText(wordsOf(button2)) : null;
+        if (isReady(button2) && !missing && !reclicked && !strays && (count === null || count === chosen.length)) {
+          return { ok: true, halted: false, button: button2, count };
+        }
+        problem = selectionProblem(chosen.length, button2, count, missing, reclicked, strays);
+        if (env.now() >= until) break;
+        await env.sleep(SELECTION_POLL);
+      }
+      untickChosen(chosen, { rows: allRows });
+      await env.sleep(1);
+    }
+    return { ok: false, halted: false, problem };
+  }
+  function rowsToSelect(live, types, start) {
+    const from = wholeNumber(start, 1);
+    const scope = from > 1 ? (live || []).slice(from - 1) : live || [];
+    return scope.filter((each) => wantsFormat(types, each.identity.format));
+  }
+  function allTicked(rows) {
+    return rows.length > 0 && rows.every((each) => isTicked(each.box) === true);
+  }
+  function selectAllLabel(rows) {
+    return allTicked(rows) ? "Untick all" : "Select all";
+  }
+  function tickAll(rows, usable) {
+    const untick = allTicked(rows);
+    const done = { untick, changed: 0, passed: 0, rows: rows.length };
+    for (const each of rows) {
+      if (isTicked(each.box) === !untick) continue;
+      if (!untick && typeof usable === "function" && usable(each) === false) {
+        done.passed += 1;
+        continue;
+      }
+      clickBox(each.box);
+      done.changed += 1;
+    }
+    return done;
+  }
+  function selectAllReport(done, kept, button2) {
+    if (done.untick) return `Unticked ${done.changed}.` + (kept ? ` ${kept} stayed ticked: press again.` : "");
+    if (!done.rows) return "No rows to select.";
+    const wanted = done.rows - done.passed;
+    const passed = done.passed ? ` (${done.passed} hidden, passed over)` : "";
+    if (kept < wanted) {
+      return `Only ${kept} of ${wanted} stayed ticked${passed}. Press again; if it will not rise, the page caps a selection, so use Play.`;
+    }
+    const named = collapse(button2).slice(0, 30);
+    return `Selected ${kept} of ${done.rows}${passed}. Now press the page's download button` + (named ? ` ("${named}")` : "") + ".";
+  }
+
+  // src/lib/batch/runner.js
+  var DEFAULT_BATCH = 10;
+  var DEFAULT_TIMEOUT = 90;
+  var DEFAULT_SETTLE = 1;
+  var DEFAULT_RETRY_BATCH = 3;
+  var MISSES_BEFORE_STOPPING = 3;
+  var MAX_LOAD_MORE = 500;
+  function quietly(work) {
+    try {
+      return work();
+    } catch {
+      return void 0;
+    }
+  }
+  function endOfPage(batches, counts, alone) {
+    if (!counts.rows && !alone) return "No rows found.";
+    return (batches ? `Done: ${batches} batch(es).` : "Nothing to do here.") + (counts.unconfirmed ? ` ${counts.unconfirmed} unconfirmed: Play retries them.` : " Next page, then Play.") + (alone ? ` ${alone} of other file types left.` : "");
+  }
+  function leftAlone(scope, types, ledger) {
+    const others = scope.filter((each) => !wantsFormat(types, each.identity.format)).map((each) => each.identity);
+    const counts = pageCounts(others, ledger);
+    return counts.todo + counts.unconfirmed;
+  }
+  function createRunner(deps) {
+    let state = "idle";
+    let stopAsked = false;
+    let ended = Promise.resolve();
+    const show = (next) => {
+      state = next;
+      quietly(() => deps.showState(next));
+    };
+    const say = (text) => quietly(() => deps.say(text));
+    const refresh = () => quietly(() => deps.refresh());
+    const halted = () => stopAsked || state === "pausing";
+    function formatsNow() {
+      if (typeof deps.formats !== "function") return null;
+      const types = quietly(() => deps.formats());
+      return Array.isArray(types) ? types : null;
+    }
+    function saveList() {
+      const documents = quietly(() => deps.siteDocuments()) || 0;
+      if (!documents) return "Ledger empty, so no list to save.";
+      const name = quietly(() => deps.saveExport());
+      return name ? `Saved ${name}.` : "The list could not be saved.";
+    }
+    function usableFirst(eligible, live, size) {
+      if (typeof deps.page.usable !== "function") return eligible.slice(0, size);
+      const byId = new Map(live.map((each) => [each.identity.id, each]));
+      const out = [];
+      for (let at = 0; at < eligible.length && out.length < size; at++) {
+        const row2 = byId.get(eligible[at].id);
+        const fit = row2 ? quietly(() => deps.page.usable(row2)) : false;
+        if (fit !== false) out.push(eligible[at]);
+      }
+      return out;
+    }
+    async function loop() {
+      const retried = /* @__PURE__ */ new Set();
+      let allLoaded = false;
+      let loadPresses = 0;
+      let batches = 0;
+      let misses = 0;
+      let ending = "";
+      let saveAtEnd = false;
+      let lastEnd = null;
+      let between = {};
+      try {
+        if (typeof deps.begin === "function") deps.begin();
+        const store = deps.store();
+        const settings = deps.settings();
+        for (; ; ) {
+          if (stopAsked) {
+            ending = "Stopped.";
+            saveAtEnd = true;
+            break;
+          }
+          if (state === "pausing") {
+            ending = "Paused. Play carries on.";
+            break;
+          }
+          const types = formatsNow();
+          if (Array.isArray(types) && !types.length) {
+            ending = describeFormats(types);
+            saveAtEnd = batches > 0;
+            break;
+          }
+          const start = wholeNumber(settings.startAt, 1);
+          say("Reading rows\u2026");
+          const readStart2 = deps.now();
+          const live = deps.page.rows();
+          const readMs = deps.now() - readStart2;
+          const scope = start > 1 ? live.slice(start - 1) : live;
+          const identities = scope.filter((each) => wantsFormat(types, each.identity.format)).map((each) => each.identity);
+          const ledger = store.read();
+          let mode = "fresh";
+          let picked = usableFirst(chooseBatch(identities, ledger, identities.length, "fresh"), live, settings.size);
+          if (!picked.length && !allLoaded && typeof deps.page.loadMore === "function") {
+            const more = await deps.page.loadMore(halted) || {};
+            loadPresses += more.pressed ? 1 : 0;
+            if (more.pressed && more.grew && loadPresses < MAX_LOAD_MORE) {
+              say(`Load more: +${more.after - more.before} rows.`);
+            } else {
+              allLoaded = true;
+              if (more.pressed) say("Load more added nothing.");
+            }
+            continue;
+          }
+          if (!picked.length) {
+            mode = "retry";
+            const remaining = identities.filter((each) => !retried.has(each.id));
+            picked = usableFirst(chooseBatch(remaining, ledger, remaining.length, "retry"), live, settings.retrySize);
+          }
+          if (!picked.length) {
+            if (!live.length) {
+              const why = typeof deps.page.explainNoRows === "function" ? quietly(() => deps.page.explainNoRows()) : "";
+              ending = "No rows found." + (why ? " " + why : "");
+            } else if (live.length < start) {
+              ending = `No row ${start}: this page has ${live.length}. Lower "start at".`;
+            } else {
+              ending = endOfPage(batches, pageCounts(identities, ledger), leftAlone(scope, types, ledger));
+            }
+            saveAtEnd = batches > 0;
+            break;
+          }
+          const wanted = new Set(picked.map((each) => each.id));
+          const chosen = live.filter((each) => wanted.has(each.identity.id));
+          const next = wholeNumber(ledger.nextBatch, 1);
+          say(`Batch ${next}: ticking ${chosen.length}` + (mode === "retry" ? " (retry)" : "") + (Array.isArray(types) ? `, ${andList(types)} only` : "") + "\u2026");
+          const takeStart = deps.now();
+          let taken = await deps.page.take(chosen, halted);
+          const takeMs = deps.now() - takeStart;
+          if (!taken.ok) {
+            deps.page.untick(chosen);
+            if (taken.halted) continue;
+            ending = taken.problem;
+            break;
+          }
+          let quietMs = null;
+          let stillChanging = false;
+          if (typeof deps.page.quiet === "function") {
+            say(`Batch ${next}: letting the page settle\u2026`);
+            const calm = await deps.page.quiet(halted) || {};
+            if (calm.halted) {
+              deps.page.untick(chosen);
+              continue;
+            }
+            quietMs = typeof calm.waitedMs === "number" ? calm.waitedMs : null;
+            stillChanging = calm.quiet === false;
+            taken = await deps.page.take(chosen, halted);
+            if (!taken.ok) {
+              deps.page.untick(chosen);
+              if (taken.halted) continue;
+              ending = taken.problem;
+              break;
+            }
+          }
+          const batch2 = store.nextBatch();
+          const pressedAt = deps.now();
+          const timing = Object.assign({
+            after: lastEnd ? lastEnd.batch : null,
+            handedOver: lastEnd ? lastEnd.confirmed : false,
+            gapSeconds: lastEnd ? (pressedAt - lastEnd.at) / 1e3 : null,
+            settleMs: null,
+            untickMs: null,
+            refreshMs: null
+          }, between, { readMs, takeMs, quietMs, stillChanging });
+          say(`Batch ${batch2}: pressed.`);
+          const outcome = await deps.page.press(taken.button, batch2, settings.timeout, timing);
+          lastEnd = { batch: batch2, at: deps.now(), confirmed: outcome.status === "confirmed" };
+          between = {};
+          const waited = Math.round((lastEnd.at - pressedAt) / 1e3);
+          store.record(chosen.map((each) => each.identity), batch2, outcome.status, deps.iso(), {
+            mode,
+            waited,
+            evidence: outcome.evidence,
+            reason: outcome.reason,
+            where: deps.where()
+          });
+          batches += 1;
+          if (mode === "retry") for (const each of chosen) retried.add(each.identity.id);
+          if (outcome.status === "confirmed") {
+            misses = 0;
+            say(`Batch ${batch2} \u2713 ${waited}s`);
+            const settleStart = deps.now();
+            await deps.sleep(settings.settle);
+            between.settleMs = deps.now() - settleStart;
+          } else {
+            misses += 1;
+            say(`Batch ${batch2} \u2717 ` + (outcome.reason === "timeout" ? `no file in ${settings.timeout}s` : outcome.reason) + `: ${chosen.length} unconfirmed`);
+          }
+          const untickStart = deps.now();
+          deps.page.untick(chosen);
+          between.untickMs = deps.now() - untickStart;
+          const refreshStart = deps.now();
+          refresh();
+          between.refreshMs = deps.now() - refreshStart;
+          if (misses >= MISSES_BEFORE_STOPPING) {
+            ending = `Stopped: ${MISSES_BEFORE_STOPPING} batches in a row showed no file. See Details.`;
+            saveAtEnd = true;
+            break;
+          }
+        }
+      } catch (error) {
+        ending = "Stopped on a script fault: " + (error && error.message ? error.message : String(error)) + ".";
+      }
+      stopAsked = false;
+      show("idle");
+      quietly(() => {
+        if (typeof deps.end === "function") deps.end();
+      });
+      if (saveAtEnd) ending += " " + saveList();
+      refresh();
+      say(ending);
+    }
+    return {
+      state: () => state,
+      play() {
+        if (state === "pausing") {
+          show("running");
+          say("Carrying on.");
+          return ended;
+        }
+        if (state !== "idle") return ended;
+        stopAsked = false;
+        show("running");
+        ended = loop();
+        return ended;
+      },
+      pause() {
+        if (state !== "running") return ended;
+        show("pausing");
+        say("Pausing after this batch\u2026");
+        return ended;
+      },
+      // Stop ends the wait at once and records the batch in hand unconfirmed.
+      stop() {
+        if (state === "idle") {
+          say(saveList());
+          return ended;
+        }
+        if (state === "stopping") return ended;
+        stopAsked = true;
+        show("stopping");
+        say("Stopping\u2026");
+        quietly(() => deps.page.abortWait());
+        return ended;
+      },
+      // Forgets every ledger kept on this site, after deps.confirm says yes.
+      reset() {
+        if (state !== "idle") {
+          say("Stop the run before Reset.");
+          return false;
+        }
+        const documents = quietly(() => deps.siteDocuments()) || 0;
+        if (!documents) {
+          say("The ledger is already empty.");
+          return false;
+        }
+        const agreed = quietly(() => deps.confirm(`Forget all ${documents} document(s) in this site's ledger? The next Play fetches every one again.`));
+        if (agreed !== true) {
+          say("Reset cancelled.");
+          return false;
+        }
+        const cleared = quietly(() => deps.forgetSite()) === true;
+        refresh();
+        say(cleared ? `Forgot ${documents} document(s).` : "Forgotten here, but storage refused; a reload may bring it back.");
+        return cleared;
+      }
+    };
+  }
+  var PLACES = "(zip|basket|downloads?|download\\s+(list|basket|cart|folder)|selection|cart|list|project|folder|collection|favou?rites|wish\\s*list|briefcase|library|pack|bundle|binder|board|documents?|bag)";
+  var ADD_TEXT = new RegExp("^(\\+\\s*)?((add|save)(\\s+(it|this|item|file|document))?\\s+to\\s+(your\\s+|the\\s+|my\\s+)?" + PLACES + "\\b|(select|add)\\s+for\\s+download\\b)", "i");
+  var IN_ZIP_TEXT = new RegExp("^(((remove|delete)\\s+from|(added|saved)\\s+to|in)\\s+(your\\s+|the\\s+|my\\s+)?" + PLACES + "\\b|added\\b|(saved|selected)!?$|\u2713)", "i");
+  function isAddText(text) {
+    const words = collapse(text);
+    return words.length <= 30 && ADD_TEXT.test(words);
+  }
+  function isInZipText(text) {
+    const words = collapse(text);
+    return words.length <= 30 && IN_ZIP_TEXT.test(words);
+  }
+  var ZIP_PREFIX = "qs-intelligence zip ledger ";
+  var ZIP_STATUSES = ["added", "refused", "silent"];
+  function zipLedgerKey(href) {
+    const where = new URL(String(href));
+    return ZIP_PREFIX + where.origin + where.pathname;
+  }
+  function readZipLedger(storage, key) {
+    const ledger = { version: 1, key, cards: {} };
+    let held = null;
+    try {
+      const raw = storage ? storage.getItem(key) : null;
+      held = typeof raw === "string" && raw ? JSON.parse(raw) : null;
+    } catch {
+      held = null;
+    }
+    if (!held || typeof held !== "object" || Array.isArray(held) || !held.cards || typeof held.cards !== "object" || Array.isArray(held.cards)) {
+      return ledger;
+    }
+    for (const id of Object.keys(held.cards)) {
+      const card = held.cards[id];
+      if (card && typeof card === "object" && ZIP_STATUSES.indexOf(card.status) >= 0) putRow(ledger.cards, id, card);
+    }
+    return ledger;
+  }
+  function openZipStore(storage, key) {
+    let memory = readZipLedger(storage, key);
+    let saved = true;
+    function read() {
+      const stored = readZipLedger(storage, key);
+      for (const id of Object.keys(stored.cards)) {
+        if (!owns(memory.cards, id)) putRow(memory.cards, id, stored.cards[id]);
+      }
+      return memory;
+    }
+    return {
+      key,
+      read,
+      record(card, status, why, at, where) {
+        if (ZIP_STATUSES.indexOf(status) < 0) throw new Error(`an item is added, refused or silent, not "${status}"`);
+        read();
+        putRow(memory.cards, card.id, {
+          title: String(card.title || "").slice(0, 240),
+          status,
+          why: String(why || ""),
+          at,
+          where: where || ""
+        });
+        try {
+          if (!storage) throw new Error("no storage");
+          storage.setItem(key, JSON.stringify(memory));
+          saved = true;
+        } catch {
+          saved = false;
+        }
+        return memory;
+      },
+      saved: () => saved,
+      forget() {
+        memory = { version: 1, key, cards: {} };
+        try {
+          if (storage) storage.removeItem(key);
+          return true;
+        } catch {
+          return false;
+        }
+      }
+    };
+  }
+  var MAX_ZIP_PAGES = 500;
+  function zipCounts(cards, ledger, inZip) {
+    const counts = { cards: cards.length, added: 0, refused: 0, silent: 0, todo: 0 };
+    for (const card of cards) {
+      const held = ledger && owns(ledger.cards, card.id) ? ledger.cards[card.id] : null;
+      if (held) counts[held.status] += 1;
+      else if (typeof inZip === "function" && inZip(card) === true) counts.added += 1;
+      else counts.todo += 1;
+    }
+    return counts;
+  }
+  function zipAddedCount(ledger) {
+    return Object.keys(ledger.cards).filter((id) => ledger.cards[id].status === "added").length;
+  }
+  function zipSummary(counts, added) {
+    return `${counts.cards} items \xB7 ${counts.added} done \xB7 ${counts.todo} to do` + (counts.refused ? ` \xB7 ${counts.refused} not clickable` : "") + (counts.silent ? ` \xB7 ${counts.silent} no change` : "") + ` \xB7 ${added} on site`;
+  }
+  function createClickRunner(deps) {
+    let state = "idle";
+    let sweeping = null;
+    let again = false;
+    let addedSincePlay = 0;
+    let full = null;
+    const say = (text) => quietly(() => deps.say(text));
+    const show = (next) => {
+      state = next;
+      quietly(() => deps.showState(next));
+    };
+    function record(card, status, why) {
+      deps.store.record(card, status, why, deps.iso(), deps.where());
+      quietly(() => deps.page.paint(card, status));
+    }
+    function stateOf(card) {
+      if (typeof deps.page.state === "function") return quietly(() => deps.page.state(card)) || "other";
+      const words = quietly(() => card.words()) || "";
+      if (isInZipText(words)) return "in";
+      return isAddText(words) ? "ready" : "other";
+    }
+    function limitNow() {
+      if (typeof deps.limit !== "function") return Infinity;
+      return wholeNumber(quietly(() => deps.limit()), DEFAULT_ZIP_LIMIT);
+    }
+    function fullNow() {
+      const limit = limitNow();
+      if (!Number.isFinite(limit)) return null;
+      let holds = null;
+      if (typeof deps.zipHolds === "function") {
+        const said = quietly(() => deps.zipHolds());
+        holds = typeof said === "number" && Number.isFinite(said) && said >= 0 ? said : null;
+      }
+      const count = holds !== null ? holds : addedSincePlay;
+      return count >= limit ? { count, limit, site: holds !== null } : null;
+    }
+    async function sweepOnce() {
+      const cards = deps.page.cards();
+      let pressed = 0;
+      for (let at = 0; at < cards.length; at++) {
+        if (state !== "running") break;
+        const card = cards[at];
+        const ledger = deps.store.read();
+        const held = owns(ledger.cards, card.id) ? ledger.cards[card.id] : null;
+        if (held && held.status === "added") {
+          quietly(() => deps.page.paint(card, "added"));
+          continue;
+        }
+        const now = stateOf(card);
+        if (now === "in") {
+          record(card, "added", "already done");
+          continue;
+        }
+        if (now !== "ready") continue;
+        if (held && held.status === "silent") {
+          quietly(() => deps.page.paint(card, "silent"));
+          continue;
+        }
+        if (quietly(() => card.clickable()) !== true) {
+          record(card, "refused", "could not be clicked");
+          continue;
+        }
+        full = fullNow();
+        if (full) break;
+        say(`Clicking ${at + 1} of ${cards.length}: ${String(card.title || "").slice(0, 40)}`);
+        const outcome = await deps.page.press(card) || {};
+        record(card, outcome.added ? "added" : "silent", outcome.why || "");
+        if (outcome.added) addedSincePlay += 1;
+        pressed += 1;
+        await deps.sleep(deps.gap);
+      }
+      return pressed;
+    }
+    function sweep() {
+      if (sweeping) {
+        again = true;
+        return sweeping;
+      }
+      let finished = null;
+      sweeping = new Promise((resolve) => {
+        finished = resolve;
+      });
+      const promise = sweeping;
+      (async () => {
+        try {
+          quietly(() => deps.setAuto(true));
+          let pressed = 0;
+          let ending = "";
+          let lastPage = false;
+          let turned = 0;
+          full = null;
+          do {
+            again = false;
+            pressed += await sweepOnce();
+            if (full && state === "running") {
+              ending = `Limit reached (${full.count}). Download the zip, empty it if the site keeps it, then Play to carry on.`;
+              break;
+            }
+            if (again || state !== "running" || typeof deps.page.next !== "function") continue;
+            say("Page done; next page\u2026");
+            const moved = await deps.page.next() || {};
+            if (state !== "running") break;
+            if (moved.pressed && moved.changed) {
+              turned += 1;
+              if (turned >= MAX_ZIP_PAGES) ending = `Stopped after ${MAX_ZIP_PAGES} pages.`;
+              else again = true;
+              continue;
+            }
+            lastPage = true;
+            ending = "Done: last page.";
+          } while (again && state === "running");
+          if (ending && state === "running") {
+            show("idle");
+            quietly(() => deps.setAuto(false));
+            say(ending + (lastPage ? ` ${zipAddedCount(deps.store.read())} done on this site.` : ""));
+          } else if (state === "running") {
+            say((pressed ? "Page done." : "Nothing new here.") + " Open the next page to carry on, or Stop.");
+          }
+        } catch (error) {
+          show("idle");
+          quietly(() => deps.setAuto(false));
+          say("Stopped on a script fault: " + (error && error.message ? error.message : String(error)) + ".");
+        } finally {
+          sweeping = null;
+          quietly(() => deps.refresh());
+          finished();
+        }
+      })();
+      return promise;
+    }
+    return {
+      state: () => state,
+      play() {
+        if (state === "running") return sweeping || Promise.resolve();
+        addedSincePlay = 0;
+        show("running");
+        return sweep();
+      },
+      pageChanged() {
+        if (state !== "running") return Promise.resolve();
+        return sweep();
+      },
+      stop() {
+        show("idle");
+        quietly(() => deps.setAuto(false));
+        say("Stopped.");
+        return sweeping || Promise.resolve();
+      },
+      reset() {
+        if (state !== "idle") {
+          say("Stop before Reset.");
+          return false;
+        }
+        const count = Object.keys(deps.store.read().cards).length;
+        if (!count) {
+          say("The click ledger is already empty.");
+          return false;
+        }
+        const agreed = quietly(() => deps.confirm(`Forget all ${count} item(s) in this site's click ledger? The next Play clicks them again. It does not empty anything on the site.`));
+        if (agreed !== true) {
+          say("Reset cancelled.");
+          return false;
+        }
+        const cleared = deps.store.forget();
+        quietly(() => deps.refresh());
+        say(cleared ? `Forgot ${count} item(s).` : "Forgotten here, but storage refused.");
+        return cleared;
+      }
+    };
+  }
+
   // src/lib/ui.js
   var PREFIX2 = "pz-";
   function tag(name, props = {}, children = []) {
@@ -1215,7 +3528,9 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     onRemovePaywall,
     onRevert,
     onReveal,
-    onSettings
+    onSettings,
+    onBatch,
+    batchOpen
   }) {
     const t = palette();
     const wrap = own(tag("div", { className: PREFIX2 + "control" }), "control");
@@ -1283,6 +3598,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     item("block", "\u{1F6AB}  Block a popup", onBlock);
     item("paywall", "\u{1F513}  Remove paywall", onRemovePaywall);
     item("revert", "\u21A9\uFE0F  Revert last block", onRevert);
+    if (onBatch) item("batch", batchOpen ? "\u2611\uFE0F  Close batch clicker" : "\u2611\uFE0F  Batch clicker", onBatch);
     const strip = tag("div");
     strip.setAttribute("data-pz-status", "");
     strip.style.cssText = `padding:7px 12px;border-top:1px solid ${t.border};border-bottom:1px solid ${t.border};color:${t.sub};font:11px sans-serif;min-height:16px;background:${t.head};`;
@@ -1341,20 +3657,20 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       style: `font-weight:bold;color:${t.fg};margin:6px 0 4px;`
     }));
     const addRule = (rule, scope) => {
-      const row = tag("div");
-      row.style.cssText = "display:flex;gap:6px;align-items:center;margin:4px 0;";
+      const row2 = tag("div");
+      row2.style.cssText = "display:flex;gap:6px;align-items:center;margin:4px 0;";
       const cb = tag("input", { type: "checkbox", checked: rule.enabled !== false });
       cb.setAttribute("data-act", "toggle-rule");
       cb.addEventListener("change", () => onToggleRule({ rule, scope, enabled: cb.checked }));
-      row.appendChild(cb);
-      row.appendChild(tag("span", {
+      row2.appendChild(cb);
+      row2.appendChild(tag("span", {
         textContent: `${rule.type} \u201C${rule.value}\u201D \xB7 ${scope === "global" ? "all sites" : "this site"}`,
         style: "flex:1;word-break:break-all;color:" + (rule.enabled === false ? t.sub : t.fg)
       }));
-      row.appendChild(btn("Edit", "edit-rule", () => onEditRule({ rule, scope })));
-      row.appendChild(btn("Delete", "delete-rule", () => onDeleteRule({ rule, scope })));
-      if (scope === "site") row.appendChild(btn("Make global", "promote-rule", () => onPromoteRule({ rule })));
-      panel.appendChild(row);
+      row2.appendChild(btn("Edit", "edit-rule", () => onEditRule({ rule, scope })));
+      row2.appendChild(btn("Delete", "delete-rule", () => onDeleteRule({ rule, scope })));
+      if (scope === "site") row2.appendChild(btn("Make global", "promote-rule", () => onPromoteRule({ rule })));
+      panel.appendChild(row2);
     };
     const globals = library2.global || [];
     const dom = (library2.domains || {})[hostname2] || {};
@@ -1527,6 +3843,1691 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     return panel;
   }
 
+  // src/lib/batch/panel.js
+  function numberStyle(width, t = palette()) {
+    return [
+      `width:${width}px`,
+      "min-width:0",
+      "max-width:none",
+      "height:auto",
+      "box-sizing:border-box",
+      "padding:2px 4px",
+      "margin:0",
+      "font:12px/1.3 sans-serif",
+      `color:${t.fg}`,
+      `background:${t.field}`,
+      `border:1px solid ${t.border}`,
+      "border-radius:4px",
+      "text-align:left"
+    ].map((rule) => rule + " !important").join(";");
+  }
+  var RESET = "text-transform:none;letter-spacing:normal;line-height:1.3;margin:0;width:auto;height:auto;box-shadow:none;text-shadow:none;float:none;text-align:center;vertical-align:middle;";
+  function button(t, act, label, handler, title) {
+    const b = tag("button", { textContent: label, type: "button" });
+    b.setAttribute("data-act", act);
+    if (title) b.title = title;
+    b.style.cssText = `border:1px solid ${t.border};background:${t.head};color:${t.fg};border-radius:5px;` + RESET + "padding:3px 8px;cursor:pointer;font:12px sans-serif;box-sizing:border-box;" + (getTouch() ? "min-height:40px;" : "");
+    if (handler) b.addEventListener("click", handler);
+    return b;
+  }
+  function row(gap = 6) {
+    const r = tag("div");
+    r.style.cssText = `display:flex;flex-wrap:wrap;gap:${gap}px;align-items:center;`;
+    return r;
+  }
+  function numberField(t, act, label, value, width, handler) {
+    const wrap = tag("label");
+    wrap.style.cssText = `display:flex;align-items:center;gap:4px;color:${t.sub};`;
+    wrap.appendChild(tag("span", { textContent: label }));
+    const input = tag("input", { type: "number", min: "1", value: String(value) });
+    input.setAttribute("data-act", act);
+    input.style.cssText = numberStyle(width, t);
+    if (handler) input.addEventListener("change", () => handler(input.value));
+    wrap.appendChild(input);
+    return { wrap, input };
+  }
+  function chipStyle(on, t = palette()) {
+    return RESET + "padding:1px 8px;border-radius:10px;cursor:pointer;font:11px/1.6 sans-serif;" + (on ? `background:${t.accent};color:#fff;border:1px solid ${t.accent};` : `background:${t.chip};color:${t.sub};border:1px solid ${t.chipBorder};text-decoration:line-through;`);
+  }
+  function createBatchPanel({
+    mode = "tick",
+    kind = null,
+    batchSize = 10,
+    startAt = 1,
+    limit = 50,
+    position = null,
+    onClose,
+    onPlay,
+    onStop,
+    onReset,
+    onPickItem,
+    onForgetItem,
+    onPickButton,
+    onSelectAll,
+    onSize,
+    onStart,
+    onLimit,
+    onType,
+    onKind
+  }) {
+    const t = palette();
+    const panel = own(tag("div", { className: "pz-batch" }), "batch");
+    panel.style.cssText = `position:fixed;z-index:2147483647;width:300px;max-width:calc(100vw - 24px);box-sizing:border-box;background:${t.bg};color:${t.fg};border:1px solid ${t.border};border-radius:8px;font:12px sans-serif;box-shadow:${t.shadow};overflow:hidden;text-align:left;` + (position ? `left:${position.left}px;top:${position.top}px;` : "right:12px;bottom:54px;");
+    const head = tag("div");
+    head.setAttribute("data-pz-drag", "");
+    head.style.cssText = `display:flex;align-items:center;gap:8px;padding:8px 12px;background:${t.head};border-bottom:1px solid ${t.border};cursor:move;user-select:none;`;
+    head.appendChild(tag("strong", { textContent: "\u2611 Batch clicker", style: `color:${t.fg};` }));
+    const modeLabel = tag("span", {
+      textContent: mode === "click" ? "click each" : "tick & download",
+      style: `flex:1;color:${t.sub};font-size:11px;`
+    });
+    modeLabel.setAttribute("data-pz-mode", "");
+    head.appendChild(modeLabel);
+    const cls = tag("button", { textContent: "\u2715", type: "button", title: "Close" });
+    cls.setAttribute("data-act", "batch-close");
+    cls.style.cssText = RESET + `border:0;background:none;color:${t.fg};font-size:15px;line-height:1;cursor:pointer;padding:0 2px;`;
+    if (onClose) cls.addEventListener("click", onClose);
+    head.appendChild(cls);
+    panel.appendChild(head);
+    const body = tag("div");
+    body.style.cssText = "display:flex;flex-direction:column;gap:8px;padding:10px 12px;";
+    panel.appendChild(body);
+    const controls = row();
+    const play = tag("button", { textContent: "\u25B6 Play", type: "button" });
+    play.setAttribute("data-act", "batch-play");
+    play.style.cssText = RESET + `border:0;border-radius:12px;padding:4px 14px;cursor:pointer;font:bold 12px sans-serif;color:#fff;background:${t.accent};min-width:76px;` + (getTouch() ? "min-height:40px;" : "");
+    if (onPlay) play.addEventListener("click", onPlay);
+    controls.appendChild(play);
+    controls.appendChild(button(t, "batch-stop", "\u25A0 Stop", onStop, "Stop, and save the list"));
+    const reset = button(t, "batch-reset", "\u21BA Reset", onReset, "Forget what this site's ledger holds");
+    controls.appendChild(reset);
+    body.appendChild(controls);
+    const numbers = row(10);
+    let size = null;
+    let start = null;
+    let cap = null;
+    if (mode === "click") {
+      cap = numberField(t, "batch-limit", "Stop after", limit, 64, onLimit);
+      cap.wrap.title = "Stop once this many are added (or the site's own zip count reaches it)";
+      numbers.appendChild(cap.wrap);
+    } else {
+      size = numberField(t, "batch-size", "Batch", batchSize, 52, onSize);
+      start = numberField(t, "batch-start", "Start at row", startAt, 64, onStart);
+      numbers.appendChild(size.wrap);
+      numbers.appendChild(start.wrap);
+    }
+    body.appendChild(numbers);
+    const types = row(4);
+    types.setAttribute("data-pz-types", "");
+    types.style.display = "none";
+    if (onType) {
+      types.addEventListener("click", (event) => {
+        const chip = event.target && event.target.closest ? event.target.closest("[data-type]") : null;
+        if (chip) onType(chip.getAttribute("data-type"));
+      });
+    }
+    body.appendChild(types);
+    const teach = row();
+    const pickItem = button(
+      t,
+      "batch-pick-item",
+      "\u2610 Pick item",
+      onPickItem,
+      "Click one of the things you want clicked many times: a checkbox or a button"
+    );
+    teach.appendChild(pickItem);
+    const forget = button(t, "batch-forget-item", "\u2715", onForgetItem, "Forget the picked item; find items automatically");
+    forget.style.padding = "3px 6px";
+    forget.style.display = "none";
+    teach.appendChild(forget);
+    let pickButton2 = null;
+    let selectAll = null;
+    if (mode !== "click") {
+      pickButton2 = button(
+        t,
+        "batch-pick-button",
+        "\u2B07 Download button",
+        onPickButton,
+        "Click the page's own download button, so Play presses that one"
+      );
+      teach.appendChild(pickButton2);
+      selectAll = button(
+        t,
+        "batch-select-all",
+        "Select all",
+        onSelectAll,
+        "Tick every row a run would take, and leave the download to you"
+      );
+      teach.appendChild(selectAll);
+    }
+    body.appendChild(teach);
+    if (kind) {
+      const seg = tag("div");
+      seg.style.cssText = `display:flex;align-self:flex-start;border:1px solid ${t.border};border-radius:6px;overflow:hidden;`;
+      [["box", "Tick in batches"], ["button", "Click each"]].forEach(([value, label], i) => {
+        const on = kind === value;
+        const b = tag("button", { textContent: label, type: "button" });
+        b.setAttribute("data-act", "batch-kind-" + value);
+        b.title = value === "box" ? "Tick these in batches and press the page's download button" : "Press each of these once, page by page";
+        b.style.cssText = RESET + "border:0;padding:3px 10px;cursor:pointer;font:11px sans-serif;" + (i ? `border-left:1px solid ${t.border};` : "") + (on ? `background:${t.accent};color:#fff;font-weight:bold;` : `background:${t.head};color:${t.fg};`);
+        if (!on && onKind) b.addEventListener("click", () => onKind(value));
+        seg.appendChild(b);
+      });
+      body.appendChild(seg);
+    }
+    const strip = tag("div");
+    strip.style.cssText = `padding:7px 12px;border-top:1px solid ${t.border};background:${t.head};display:flex;flex-direction:column;gap:3px;`;
+    const counts = tag("div", { style: `color:${t.fg};font:11px sans-serif;min-height:14px;` });
+    counts.setAttribute("data-pz-counts", "");
+    const status = tag("div", { textContent: "Ready.", style: `color:${t.sub};font:11px sans-serif;min-height:14px;` });
+    status.setAttribute("data-pz-status", "");
+    const more = tag("button", { textContent: "Details \u25B8", type: "button" });
+    more.setAttribute("data-act", "batch-details");
+    more.style.cssText = RESET + `display:none;align-self:flex-start;border:0;background:none;padding:0;cursor:pointer;color:${t.sub};font:11px sans-serif;text-decoration:underline;`;
+    const box = tag("pre");
+    box.setAttribute("data-pz-details", "");
+    box.style.cssText = `display:none;margin:2px 0 0;max-height:160px;overflow:auto;padding:5px 6px;white-space:pre-wrap;background:${t.field};color:${t.fg};border:1px solid ${t.border};border-radius:4px;font:10.5px/1.4 ui-monospace,Consolas,monospace;`;
+    more.addEventListener("click", () => {
+      const open = box.style.display === "none";
+      box.style.display = open ? "block" : "none";
+      more.textContent = open ? "Details \u25BE" : "Details \u25B8";
+    });
+    strip.appendChild(counts);
+    strip.appendChild(status);
+    strip.appendChild(more);
+    strip.appendChild(box);
+    panel.appendChild(strip);
+    const view = {
+      el: panel,
+      mode,
+      head,
+      inputs: { size: size && size.input, start: start && start.input, limit: cap && cap.input },
+      // The button names what pressing it does next.
+      setPlay(state) {
+        if (mode === "click") {
+          play.textContent = state === "running" ? "\u23F3 Clicking\u2026" : "\u25B6 Play";
+          return;
+        }
+        play.textContent = state === "running" ? "\u23F8 Pause" : state === "pausing" ? "\u25B6 Resume" : state === "stopping" ? "Stopping\u2026" : "\u25B6 Play";
+      },
+      setStatus(text) {
+        status.textContent = text || "";
+      },
+      setCounts(text) {
+        counts.textContent = text || "";
+      },
+      // Folded away unless there is something to show; a report the person
+      // should see opens itself.
+      setDetails(text, openIt = false) {
+        box.textContent = text || "";
+        more.style.display = text ? "block" : "none";
+        if (!text || openIt) {
+          box.style.display = text && openIt ? "block" : "none";
+          more.textContent = text && openIt ? "Details \u25BE" : "Details \u25B8";
+        }
+      },
+      setTypes(list) {
+        types.textContent = "";
+        types.style.display = list.length ? "flex" : "none";
+        if (!list.length) return;
+        types.appendChild(tag("span", { textContent: "Types", style: `color:${t.sub};margin-right:2px;` }));
+        for (const each of list) {
+          const chip = tag("button", { textContent: `${each.format} ${each.rows}`, type: "button" });
+          chip.setAttribute("data-type", each.format);
+          chip.setAttribute("aria-pressed", each.on ? "true" : "false");
+          chip.title = (each.on ? "Fetched" : "Left alone") + ". Click to switch " + (each.on ? "off." : "on.");
+          chip.style.cssText = chipStyle(each.on, t);
+          types.appendChild(chip);
+        }
+      },
+      setSelectAll(label) {
+        if (selectAll) selectAll.textContent = label;
+      },
+      setPickItem(label, learned) {
+        pickItem.textContent = label;
+        forget.style.display = learned ? "inline-block" : "none";
+      },
+      setPickButton(label) {
+        if (pickButton2) pickButton2.textContent = label;
+      },
+      setReset(label) {
+        reset.textContent = label;
+      }
+    };
+    return view;
+  }
+  function makeDraggable(panel, handle, onMoved) {
+    handle.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || event.target && event.target.closest && event.target.closest("button")) return;
+      const box = panel.getBoundingClientRect();
+      const dx = event.clientX - box.left;
+      const dy = event.clientY - box.top;
+      const move = (e) => {
+        const left = Math.max(0, Math.min(window.innerWidth - 60, e.clientX - dx));
+        const top = Math.max(0, Math.min(window.innerHeight - 30, e.clientY - dy));
+        panel.style.left = left + "px";
+        panel.style.top = top + "px";
+        panel.style.right = "auto";
+        panel.style.bottom = "auto";
+      };
+      const up = () => {
+        window.removeEventListener("pointermove", move, true);
+        window.removeEventListener("pointerup", up, true);
+        const now = panel.getBoundingClientRect();
+        if (onMoved) onMoved({ left: Math.round(now.left), top: Math.round(now.top) });
+      };
+      window.addEventListener("pointermove", move, true);
+      window.addEventListener("pointerup", up, true);
+      event.preventDefault();
+    });
+  }
+
+  // src/lib/batch/tool.js
+  var MARK = "data-qs-ledger";
+  var ZIP_MARK = "data-qs-zip";
+  var POSITION_KEY = "pz-batch position";
+  var CLICKABLE2 = 'button, a, input[type="submit"], [role="button"], [class*="button"], [class*="btn"]';
+  var LOAD_MORE_WAIT = 15;
+  var ZIP_GAP = 0.3;
+  var PICKED_GAP = 0.8;
+  var ZIP_RESPONSE_MS = 1500;
+  var ZIP_LOOKS = 'button, a, [role="button"], input[type="button"], input[type="submit"], span, div, label, li';
+  var NEXT_WAIT_MS = 12e3;
+  var NEXT_TEXT = /^(next(\s+page)?|>|›|»|→|❯|〉|〉)$/i;
+  var NOT_NEXT = /prev|previous|back|first|last/i;
+  var PAGE_NUMBER = /^\d{1,3}$/;
+  var HOLDS_TEXT = /zip[^()\d]{0,30}\(\s*(\d+)\s*\)|(\d+)\s*(items?|documents?|files?)?\s*in\s+(your\s+|the\s+)?zip/i;
+  var ZIP_LOOK = {
+    added: ["3px solid #2e7d32", "Done"],
+    refused: ["3px dashed #c62828", "Not clickable: do it by hand"],
+    silent: ["3px dashed #e08a00", "Pressed, but nothing on the page changed"]
+  };
+  var TIMED_KINDS = ["fetch", "xmlhttprequest", "iframe", "frame", "other", "beacon", "navigation", ""];
+  function sleep(seconds) {
+    return new Promise((done) => setTimeout(done, Math.round(seconds * 1e3)));
+  }
+  function fileStamp(date) {
+    const two = (number) => (number < 10 ? "0" : "") + number;
+    return date.getFullYear() + two(date.getMonth() + 1) + two(date.getDate()) + "-" + two(date.getHours()) + two(date.getMinutes()) + two(date.getSeconds());
+  }
+  function onScreen(node) {
+    if (!node) return false;
+    if (typeof node.checkVisibility === "function") {
+      try {
+        return node.checkVisibility() === true;
+      } catch {
+      }
+    }
+    const box = node.getBoundingClientRect();
+    return box.width > 0 && box.height > 0;
+  }
+  function createBatchTool({ version = "0.0.0", pageWindow = window } = {}) {
+    let storage = null;
+    try {
+      storage = window.localStorage;
+    } catch {
+      storage = null;
+    }
+    const keyFor2 = (make, fallback) => {
+      try {
+        return make(location.href);
+      } catch {
+        return fallback;
+      }
+    };
+    const isOurs = (node) => {
+      const el = node && node.nodeType === 1 ? node : node && node.parentElement;
+      return !!(el && typeof el.closest === "function" && el.closest("[data-pz]"));
+    };
+    let opened = false;
+    let view = null;
+    let mode = "tick";
+    let statusText = "Ready.";
+    let detailsText = "";
+    let batchSize = DEFAULT_BATCH;
+    let resetArmed = 0;
+    let targetRecord = readTargetRecord(storage, keyFor2(targetKey, TARGET_PREFIX + "this site"));
+    let learnedHere = false;
+    let reader = null;
+    function makeReader() {
+      learnedHere = !!targetRecord && learnedMatches().length > 0;
+      const source = learnedHere && targetRecord.kind === "box" ? learnedSource(document, targetRecord, matchesTarget, isOurs) : autoSource(document, isOurs);
+      reader = createRowReader(document, { now: () => Date.now(), source });
+    }
+    const liveRows = () => reader.rows();
+    const insideRows = (node) => reader.insideRow(node);
+    function learnedMatches() {
+      if (!targetRecord) return [];
+      return Array.from(document.getElementsByTagName(targetRecord.tag)).filter((el) => !isOurs(el) && matchesTarget(el, targetRecord));
+    }
+    makeReader();
+    const stores = /* @__PURE__ */ new Map();
+    function storeHere() {
+      const key = keyFor2(ledgerKey, LEDGER_PREFIX + "this page");
+      if (!stores.has(key)) stores.set(key, openStore(storage, key));
+      return stores.get(key);
+    }
+    let runStore = null;
+    function downloadCandidates() {
+      return Array.from(document.querySelectorAll(CLICKABLE2)).filter((each) => {
+        if (!/download/i.test(each.textContent || each.value || "")) return false;
+        if (isOurs(each) || insideRows(each) || !onScreen(each)) return false;
+        const words = wordsOf(each);
+        if (!/^download\b/i.test(words) || words.length > 24) return false;
+        return !/centre|center/i.test(words);
+      });
+    }
+    function downloadButton() {
+      const all = downloadCandidates();
+      const innermost = all.filter((each) => !all.some((other) => other !== each && each.contains(other)));
+      return innermost[0] || all[0] || null;
+    }
+    function loadMoreControl(live) {
+      const last = live.length ? live[live.length - 1].row : null;
+      if (!last || typeof last.compareDocumentPosition !== "function") return null;
+      const all = Array.from(document.querySelectorAll(CLICKABLE2)).filter((each) => /more/i.test(each.textContent || each.value || "") && (last.compareDocumentPosition(each) & 4) !== 0 && !isOurs(each) && !insideRows(each) && onScreen(each) && isLoadMoreText(wordsOf(each)));
+      const innermost = all.filter((each) => !all.some((other) => other !== each && each.contains(other)));
+      return innermost[0] || null;
+    }
+    let buttonRecord = readButtonRecord(storage, keyFor2(buttonKey, BUTTON_PREFIX + "this site"));
+    let buttonCache = null;
+    function stillUsable(use) {
+      const node = use && use.button;
+      try {
+        if (!node || node.isConnected === false || insideRows(node)) return false;
+        if (use.source === "selected") return !!buttonRecord && buttonWords(labelOf(node)) === buttonRecord.words;
+        return /^download\b/i.test(wordsOf(node));
+      } catch {
+        return false;
+      }
+    }
+    function buttonInUse() {
+      if (buttonCache && Date.now() - buttonCache.at < 3e4 && stillUsable(buttonCache.use)) return buttonCache.use;
+      const use = pickButton(buttonRecord, (record) => {
+        const first2 = record.words.split(" ")[0];
+        let candidates = [];
+        try {
+          candidates = Array.from(document.getElementsByTagName(record.chain[0].tag)).filter((node) => {
+            const named = typeof node.getAttribute === "function" ? (node.getAttribute("aria-label") || "") + " " + (node.getAttribute("title") || "") : "";
+            return normaliseText(String(node.textContent || node.value || "") + " " + named).indexOf(first2) >= 0;
+          });
+        } catch {
+          candidates = [];
+        }
+        return locateButton(record, candidates, (node) => !isOurs(node) && !insideRows(node) && onScreen(node));
+      }, downloadButton);
+      buttonCache = { use, at: Date.now() };
+      return use;
+    }
+    function sayButtonInUse(lead = "") {
+      const use = buttonInUse();
+      say(lead + describeUse(use, use.button ? labelOf(use.button) : ""));
+    }
+    function say(words) {
+      statusText = words;
+      if (view) view.setStatus(words);
+    }
+    function setDetails(text, openIt = false) {
+      detailsText = text || "";
+      if (view) view.setDetails(detailsText, openIt);
+    }
+    function startAtNow() {
+      return view && view.inputs.start ? readSetting(view.inputs.start.value, 1, 1, 1e6, true) : readStart(storage, keyFor2(startKey, START_PREFIX + "this site"));
+    }
+    let formatChoice = readFormats(storage, keyFor2(formatsKey, FORMATS_PREFIX + "this site"));
+    function paintRows(rows, ledger) {
+      for (const each of rows) {
+        const held = heldRow(ledger, each.identity.id);
+        const status = held ? held.status : "";
+        if (each.row.getAttribute(MARK) === (status || null)) continue;
+        if (!status) {
+          each.row.style.opacity = "";
+          each.row.style.outline = "";
+          each.row.removeAttribute(MARK);
+          continue;
+        }
+        each.row.style.opacity = status === "confirmed" ? "0.45" : "";
+        each.row.style.outline = status === "confirmed" ? "" : "2px dashed #c40";
+        each.row.setAttribute(MARK, status);
+      }
+    }
+    function clearRowPaint() {
+      for (const node of document.querySelectorAll("[" + MARK + "]")) {
+        node.style.opacity = "";
+        node.style.outline = "";
+        node.removeAttribute(MARK);
+      }
+    }
+    let countsAt = 0;
+    let countsTimer = null;
+    function countsSoon() {
+      if (countsTimer || !opened) return;
+      const wait = Math.max(0, countsAt + 1e3 - Date.now());
+      countsTimer = setTimeout(() => {
+        countsTimer = null;
+        try {
+          showCounts();
+        } catch {
+        }
+      }, wait);
+    }
+    function showCounts(rows) {
+      if (!opened || !view) return;
+      if (mode === "click") {
+        zipShowCounts();
+        return;
+      }
+      countsAt = Date.now();
+      const live = rows || liveRows();
+      const store = runStore || storeHere();
+      const ledger = store.read();
+      const start = startAtNow();
+      const scope = start > 1 ? live.slice(start - 1) : live;
+      const ofType = scope.filter((each) => wantsFormat(formatChoice, each.identity.format));
+      const counts = pageCounts(ofType.map((each) => each.identity), ledger);
+      const all = ledgerCounts(ledger);
+      const alone = scope.length - ofType.length;
+      view.setCounts(`${live.length} rows \xB7 ${counts.todo} to do \xB7 ${all.confirmed} confirmed` + (all.unconfirmed ? ` \xB7 ${all.unconfirmed} unconfirmed` : "") + (alone ? ` \xB7 ${alone} other types` : "") + (storage && store.saved() ? "" : " \xB7 \u26A0 not saving (storage blocked)"));
+      paintRows(live, ledger);
+      const shown = formatCounts(live.map((each) => each.identity));
+      view.setTypes(shown.length > 1 || Array.isArray(formatChoice) ? shown.map((each) => ({ format: each.format, rows: each.rows, on: wantsFormat(formatChoice, each.format) })) : []);
+      view.setSelectAll(selectAllLabel(rowsToSelect(live, formatChoice, start)));
+    }
+    let countWatch = null;
+    function touchesBoxes(records) {
+      const selector = learnedHere && targetRecord.kind === "box" ? targetRecord.tag : 'input[type="checkbox"], [role="checkbox"]';
+      return records.some((record) => {
+        if (isOurs(record.target)) return false;
+        return [record.addedNodes, record.removedNodes].some((nodes) => Array.prototype.some.call(nodes || [], (node) => {
+          if (!node || node.nodeType !== 1) return false;
+          try {
+            return typeof node.matches === "function" && node.matches(selector) || typeof node.querySelector === "function" && node.querySelector(selector) !== null;
+          } catch {
+            return false;
+          }
+        }));
+      });
+    }
+    function watchCounts() {
+      if (countWatch || typeof MutationObserver !== "function") return;
+      try {
+        countWatch = new MutationObserver((records) => {
+          try {
+            noticeFrames(records);
+            if (mode === "tick" && touchesBoxes(records)) countsSoon();
+          } catch {
+          }
+        });
+        countWatch.observe(document.body || document.documentElement, { childList: true, subtree: true });
+      } catch {
+        countWatch = null;
+      }
+    }
+    let activeTag = null;
+    let lastPress = null;
+    let lastUse = null;
+    let pressTiming = null;
+    let ownSave = false;
+    let current = null;
+    let wrapped = null;
+    const seen = [];
+    const tracer = createTracer(300);
+    const sink = {
+      tag: () => ownSave ? null : activeTag,
+      now: () => Date.now(),
+      base: () => location.href,
+      note: (event) => feed(event)
+    };
+    function noticeFrames(records) {
+      if (activeTag === null) return;
+      for (const record of records) {
+        for (const node of record.addedNodes || []) {
+          if (node && node.nodeName === "IFRAME") {
+            feed({ kind: "iframe", at: Date.now(), batch: activeTag, url: String(node.src || ""), via: "added" });
+          }
+        }
+      }
+    }
+    function remember(event) {
+      const line = describeEvent(event, location.href);
+      if (!line) return;
+      let stamp = "";
+      if (lastPress && Number.isFinite(event.at)) stamp = "+" + Math.max(0, Math.round((event.at - lastPress.at) / 1e3)) + "s ";
+      const other = event.batch !== null && event.batch !== void 0 && lastPress && event.batch !== lastPress.batch ? "(batch " + event.batch + ") " : "";
+      seen.push(stamp + other + line);
+      if (seen.length > 40) seen.splice(0, seen.length - 40);
+    }
+    function feed(event) {
+      if (!event) return;
+      if (event.kind !== "clock") remember(event);
+      if (activeTag !== null) tracer.note(event);
+      if (event.kind === "response" && isFileEvidence(event) && event.batch !== null && event.batch !== void 0 && !(current && current.watch.batch === event.batch)) {
+        (runStore || storeHere()).noteLate(event.batch, describeEvent(event, location.href), (/* @__PURE__ */ new Date()).toISOString());
+      }
+      if (current && current.watch.status === "waiting") {
+        current.watch = observe(current.watch, event);
+        if (current.watch.status !== "waiting") endWait();
+      }
+    }
+    function endWait() {
+      const finished = current;
+      current = null;
+      clearInterval(finished.timer);
+      clearTimeout(finished.backstop);
+      finished.resolve(finished.watch);
+    }
+    function showWaiting(watch) {
+      const gone = Math.round((Date.now() - watch.pressedAt) / 1e3);
+      const allowed = Math.round((watch.deadline - watch.pressedAt) / 1e3);
+      say(`Batch ${watch.batch}: waiting for the file \xB7 ${gone}s of ${allowed}s` + (document.hidden ? " \xB7 tab in background, bring it to the front" : ""));
+    }
+    let resourceWatch = null;
+    function watchResources(pressedAt) {
+      stopResourceWatch();
+      if (typeof PerformanceObserver !== "function" || typeof performance === "undefined") return;
+      try {
+        const pressPerf = performance.now();
+        resourceWatch = new PerformanceObserver((list) => {
+          for (const entry of list.getEntries()) {
+            try {
+              if (TIMED_KINDS.indexOf(String(entry.initiatorType || "")) < 0) continue;
+              feed(resourceEvent(entry, pressPerf, pressedAt));
+            } catch {
+            }
+          }
+        });
+        resourceWatch.observe({ type: "resource", buffered: false });
+      } catch {
+        resourceWatch = null;
+      }
+    }
+    function stopResourceWatch() {
+      if (!resourceWatch) return;
+      try {
+        resourceWatch.disconnect();
+      } catch {
+      }
+      resourceWatch = null;
+    }
+    function buttonState(node) {
+      const state = { disabled: false, text: "", attached: true };
+      try {
+        state.disabled = !isReady(node);
+        state.text = labelOf(node);
+        state.attached = document.documentElement.contains(node);
+      } catch {
+      }
+      return state;
+    }
+    function pressAndWatch(node, batch2, timeoutSeconds, timing) {
+      return new Promise((resolve) => {
+        seen.length = 0;
+        activeTag = batch2;
+        lastPress = { batch: batch2, at: Date.now() };
+        pressTiming = timing || null;
+        tracer.start(batch2, lastPress.at);
+        if (timing) feed(Object.assign({ kind: "timing", at: lastPress.at, batch: batch2 }, timing));
+        watchResources(lastPress.at);
+        let lastState = buttonState(node);
+        feed(Object.assign({ kind: "button", at: lastPress.at, batch: batch2 }, lastState));
+        const limit = timeoutSeconds * 1e3;
+        const mine = {
+          watch: newWatch(batch2, lastPress.at, limit),
+          // What the page did is shown only once a batch ends unconfirmed,
+          // which is when it is worth reading.
+          resolve(watch) {
+            if (watch.status === "unconfirmed" && seen.length) {
+              setDetails(`What the page did after batch ${batch2} was pressed` + (pressTiming && sinceLast(pressTiming) ? ` (${sinceLast(pressTiming)})` : "") + ":\n" + seen.slice(-12).join("\n"));
+            }
+            resolve(watch);
+          },
+          timer: null,
+          backstop: null
+        };
+        current = mine;
+        mine.timer = setInterval(() => {
+          try {
+            const state = buttonState(node);
+            if (state.disabled !== lastState.disabled || state.text !== lastState.text || state.attached !== lastState.attached) {
+              lastState = state;
+              feed(Object.assign({ kind: "button", at: Date.now(), batch: batch2 }, state));
+            }
+            feed({ kind: "clock", at: Date.now() });
+            if (current === mine) showWaiting(mine.watch);
+          } catch {
+          }
+        }, 500);
+        mine.backstop = setTimeout(() => {
+          if (current === mine) {
+            mine.watch = Object.assign({}, mine.watch, { status: "unconfirmed", reason: "timeout" });
+            endWait();
+          }
+        }, limit + 5e3);
+        try {
+          node.click();
+        } catch (error) {
+          if (current === mine) {
+            mine.watch = Object.assign({}, mine.watch, { status: "unconfirmed", reason: "the press failed: " + (error && error.message) });
+            endWait();
+          }
+        }
+      });
+    }
+    let listening = false;
+    function listenForHandOver() {
+      if (listening) return;
+      listening = true;
+      const shown = () => document.visibilityState !== "hidden";
+      const quietly2 = (work) => (event) => {
+        try {
+          work(event);
+        } catch {
+        }
+      };
+      window.addEventListener("blur", quietly2((event) => {
+        if (event && event.target !== window) return;
+        feed({ kind: "blur", at: Date.now(), visible: shown() });
+      }));
+      window.addEventListener("focus", quietly2((event) => {
+        if (event && event.target !== window) return;
+        let has = false;
+        try {
+          has = document.hasFocus() === true;
+        } catch {
+          has = false;
+        }
+        feed({ kind: "focus", at: Date.now(), hasFocus: has, visible: shown() });
+      }));
+      document.addEventListener("visibilitychange", quietly2(() => feed({ kind: "visibility", at: Date.now(), visible: shown() })));
+      window.addEventListener("beforeunload", quietly2(() => feed({ kind: "unload", at: Date.now() })));
+      document.addEventListener("click", quietly2((event) => {
+        if (activeTag === null || ownSave || !event || !event.target || typeof event.target.closest !== "function") return;
+        const link = event.target.closest("a[href]");
+        if (!link || isOurs(link)) return;
+        feed({
+          kind: "anchor",
+          at: Date.now(),
+          batch: activeTag,
+          href: String(link.href || ""),
+          download: String(link.getAttribute("download") || ""),
+          via: "event"
+        });
+      }), true);
+      document.addEventListener("submit", quietly2((event) => {
+        if (activeTag === null || !event) return;
+        const form = event.target || {};
+        feed({
+          kind: "submit",
+          at: Date.now(),
+          batch: activeTag,
+          url: String(form.action || ""),
+          method: String(form.method || "get").toUpperCase(),
+          via: "submit event"
+        });
+      }), true);
+    }
+    let pageChangedAt = 0;
+    let quietWatch = null;
+    function watchQuiet() {
+      if (quietWatch || typeof MutationObserver !== "function") return;
+      try {
+        quietWatch = new MutationObserver((records) => {
+          for (const record of records) {
+            const target = record.target;
+            if (!target || isOurs(target)) continue;
+            if (record.type === "attributes" && (record.attributeName === MARK || record.attributeName === "style" && typeof target.hasAttribute === "function" && target.hasAttribute(MARK))) {
+              continue;
+            }
+            pageChangedAt = Date.now();
+            return;
+          }
+        });
+        quietWatch.observe(document.body || document.documentElement, { childList: true, subtree: true, attributes: true, characterData: true });
+      } catch {
+        quietWatch = null;
+      }
+    }
+    function stopQuietWatch() {
+      if (!quietWatch) return;
+      try {
+        quietWatch.disconnect();
+      } catch {
+      }
+      quietWatch = null;
+    }
+    function explainNoRows() {
+      const boxes = Array.prototype.filter.call(document.querySelectorAll('input[type="checkbox"]'), (box) => !isOurs(box));
+      const acting = Array.prototype.filter.call(
+        document.querySelectorAll('[role="checkbox"], [aria-checked]'),
+        (node) => !isOurs(node) && node.nodeName !== "INPUT"
+      );
+      const lines = [`The page has ${boxes.length} checkbox(es)` + (acting.length ? ` and ${acting.length} other element(s) acting as checkboxes` : "") + "."];
+      const picked = [0, 1, Math.floor(boxes.length / 2), boxes.length - 1].filter((at, index, all) => at >= 0 && at < boxes.length && all.indexOf(at) === index);
+      for (const at of picked) lines.push(`Box ${at + 1}: ${reader.explain(boxes[at])}`);
+      if (acting.length) {
+        lines.push(`First acting checkbox: <${String(acting[0].nodeName).toLowerCase()} class="` + String(acting[0].getAttribute("class") || "").slice(0, 60) + '">');
+      }
+      lines.push("If the rows are there, use Pick item and click one of their checkboxes.");
+      setDetails(lines.join("\n"));
+      return "Use Pick item, or see Details.";
+    }
+    const page = {
+      rows: liveRows,
+      take: (chosen, halted) => takeSelection(chosen, {
+        rows: liveRows,
+        locate: reader.locate,
+        checked: reader.checked,
+        button: () => {
+          lastUse = buttonInUse();
+          return lastUse.button;
+        },
+        sleep,
+        now: () => Date.now(),
+        halted
+      }),
+      press: pressAndWatch,
+      abortWait: () => {
+        if (current) feed({ kind: "stop", at: Date.now() });
+      },
+      untick: (chosen) => untickChosen(chosen, { rows: liveRows }),
+      // A styled checkbox may be hidden behind its label: the row showing is enough.
+      usable: (row2) => row2.box.disabled !== true && (onScreen(row2.box) || onScreen(row2.row)),
+      quiet: (halted) => waitForQuiet(() => pageChangedAt, Date.now(), () => Date.now(), sleep, QUIET_MS, QUIET_CAP_MS, halted),
+      explainNoRows,
+      async loadMore(halted) {
+        const live = reader.last().length ? reader.last() : liveRows();
+        const control2 = loadMoreControl(live);
+        if (!control2 || !isReady(control2)) return { pressed: false, grew: false, before: live.length, after: live.length };
+        const boxCount = () => reader.source.boxes().length;
+        const before = boxCount();
+        say(`Pressing "${wordsOf(control2).slice(0, 30)}"\u2026`);
+        control2.click();
+        const grown = await waitForGrowth(boxCount, before, sleep, () => Date.now(), LOAD_MORE_WAIT * 1e3, halted);
+        countsSoon();
+        return { pressed: true, grew: grown.grew, before, after: grown.after };
+      }
+    };
+    function saveText(text, name) {
+      ownSave = true;
+      try {
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+        link.download = name;
+        link.style.display = "none";
+        (document.body || document.documentElement).appendChild(link);
+        link.click();
+        link.remove();
+        const made = link.href;
+        setTimeout(() => {
+          try {
+            URL.revokeObjectURL(made);
+          } catch {
+          }
+        }, 3e4);
+      } finally {
+        ownSave = false;
+      }
+    }
+    function saveExport() {
+      storeHere();
+      const ledgers = siteLedgers(storage, stores, LEDGER_PREFIX);
+      const now = /* @__PURE__ */ new Date();
+      const out = buildExport(ledgers, {
+        at: now.toISOString(),
+        origin: location.origin,
+        script: `popup-zapper ${version} batch clicker`,
+        traces: tracer.all()
+      });
+      if (!out.totals.confirmed && !out.totals.unconfirmed) return "";
+      const name = `document-ledger-${location.hostname || "page"}-${fileStamp(now)}.json`;
+      saveText(JSON.stringify(out, null, 2), name);
+      return name;
+    }
+    const runner = createRunner({
+      store: () => {
+        runStore = storeHere();
+        return runStore;
+      },
+      page,
+      settings: () => ({
+        size: view && view.inputs.size ? readSetting(view.inputs.size.value, DEFAULT_BATCH, 1, 50, true) : batchSize,
+        startAt: startAtNow(),
+        retrySize: DEFAULT_RETRY_BATCH,
+        timeout: DEFAULT_TIMEOUT,
+        settle: DEFAULT_SETTLE
+      }),
+      sleep,
+      now: () => Date.now(),
+      iso: () => (/* @__PURE__ */ new Date()).toISOString(),
+      where: () => (location.search + location.hash).slice(0, 200),
+      say,
+      showState: (state) => {
+        if (view) view.setPlay(state);
+      },
+      refresh: countsSoon,
+      siteDocuments: () => {
+        storeHere();
+        return siteTotals(storage, stores, LEDGER_PREFIX).documents;
+      },
+      saveExport,
+      forgetSite: () => {
+        storeHere();
+        return forgetSite(storage, stores, LEDGER_PREFIX);
+      },
+      confirm: () => true,
+      formats: () => formatChoice,
+      // The wrappers go on at the first Play, never at load: until a run
+      // begins, the tool changes nothing on any site.
+      begin() {
+        setDetails("");
+        if (!wrapped) {
+          wrapped = installWrappers(pageWindow, sink);
+          installStartWrappers(pageWindow, sink);
+        }
+        listenForHandOver();
+        watchCounts();
+        watchQuiet();
+      },
+      end() {
+        activeTag = null;
+        runStore = null;
+        stopResourceWatch();
+        stopQuietWatch();
+        if (current) {
+          clearInterval(current.timer);
+          clearTimeout(current.backstop);
+          current = null;
+        }
+      }
+    });
+    function clickControls() {
+      if (learnedHere && targetRecord.kind === "button") return learnedMatches();
+      let nodes = [];
+      try {
+        nodes = document.querySelectorAll(ZIP_LOOKS);
+      } catch {
+        nodes = [];
+      }
+      const found = [];
+      for (const node of nodes) {
+        const raw = String(node.textContent || node.value || "");
+        if (raw.length > 60 || isOurs(node)) continue;
+        if (!isAddText(raw) && !isInZipText(raw)) continue;
+        const control2 = typeof node.closest === "function" ? node.closest('button, a, [role="button"], input') || node : node;
+        if (found.indexOf(control2) < 0 && !isOurs(control2)) found.push(control2);
+      }
+      return found.filter((each) => !found.some((other) => other !== each && each.contains(other)));
+    }
+    function zipCards() {
+      const controls = clickControls();
+      const raw = controls.map((control2) => {
+        let node = control2;
+        for (let step = 0; step < ROW_DEPTH; step++) {
+          const up = node.parentElement;
+          if (!up || up === document.body || up === document.documentElement) break;
+          if (controls.filter((each) => up.contains(each)).length > 1) break;
+          node = up;
+        }
+        const title = collapse(String(node.textContent || "").replace(String(control2.textContent || ""), " ")) || "(no title)";
+        let href = "";
+        try {
+          const link = node.querySelector("a[href]");
+          href = link && link !== control2 && !/^javascript:/i.test(link.href) ? shortUrl(link.href, location.href) : "";
+        } catch {
+          href = "";
+        }
+        return { node, control: control2, title: title.slice(0, 200), id: normaliseText(title) + (href ? " | " + href : "") };
+      });
+      const ids = numberIdentities(raw.map((each) => ({ id: each.id })));
+      return raw.map((each, at) => {
+        const card = { id: ids[at].id, title: each.title, node: each.node, control: each.control };
+        card.words = () => {
+          const live = liveControl(card);
+          return live ? labelOf(live) || String(live.textContent || "") : "";
+        };
+        card.clickable = () => zipClickable(liveControl(card));
+        return card;
+      });
+    }
+    function liveControl(card) {
+      if (card.control && card.control.isConnected !== false) return card.control;
+      if (card.node && card.node.isConnected !== false) {
+        const inside = clickControls().filter((each) => card.node.contains(each));
+        if (inside.length) {
+          card.control = inside[0];
+          return card.control;
+        }
+      }
+      const again = zipCards().filter((each) => each.id === card.id)[0];
+      if (again) {
+        card.node = again.node;
+        card.control = again.control;
+        return card.control;
+      }
+      return null;
+    }
+    function zipClickable(control2) {
+      if (!control2 || control2.isConnected === false || !isReady(control2)) return false;
+      if (/(^|\s)(is-)?disabled(\s|$)/i.test(String(control2.getAttribute ? control2.getAttribute("class") || "" : ""))) return false;
+      try {
+        const style = window.getComputedStyle(control2);
+        if (style.pointerEvents === "none" || style.visibility === "hidden") return false;
+      } catch {
+      }
+      return onScreen(control2);
+    }
+    function itemState(card) {
+      const live = liveControl(card);
+      if (!live) return "other";
+      const words = labelOf(live) || String(live.textContent || "");
+      if (isInZipText(words)) return "in";
+      if (!learnedHere || targetRecord.kind !== "button") return isAddText(words) ? "ready" : "other";
+      const said = live.getAttribute && (live.getAttribute("aria-pressed") || live.getAttribute("aria-checked"));
+      if (said === "true") return "in";
+      return !targetRecord.words || buttonWords(words) === targetRecord.words ? "ready" : "other";
+    }
+    function zipCounter() {
+      let nodes = [];
+      try {
+        nodes = document.querySelectorAll('[class*="zip"], [class*="basket"], [class*="count"], [class*="badge"], [id*="zip"], [id*="basket"]');
+      } catch {
+        nodes = [];
+      }
+      return Array.prototype.filter.call(nodes, (node) => {
+        const text = String(node.textContent || "");
+        return !isOurs(node) && text.length <= 40 && /\d/.test(text);
+      }).map((node) => collapse(node.textContent)).join(" | ");
+    }
+    function pressZip(card) {
+      return new Promise((resolve) => {
+        const control2 = liveControl(card);
+        const before = { inner: card.node.innerHTML, cls: String(card.node.className), counter: zipCounter() };
+        try {
+          control2.click();
+        } catch (error) {
+          resolve({ added: false, why: "the press failed: " + (error && error.message) });
+          return;
+        }
+        const start = Date.now();
+        const look = () => {
+          try {
+            if (itemState(card) === "in") {
+              resolve({ added: true, why: `now reads "${collapse(card.words())}"` });
+              return;
+            }
+            if (card.node.isConnected !== false && (card.node.innerHTML !== before.inner || String(card.node.className) !== before.cls)) {
+              resolve({ added: true, why: "the item changed when pressed" });
+              return;
+            }
+            const counter = zipCounter();
+            if (counter !== before.counter) {
+              resolve({ added: true, why: "the count changed: " + counter.slice(0, 60) });
+              return;
+            }
+          } catch {
+          }
+          if (Date.now() - start >= ZIP_RESPONSE_MS) {
+            resolve({ added: false, why: "nothing on the page changed" });
+            return;
+          }
+          setTimeout(look, 50);
+        };
+        setTimeout(look, 50);
+      });
+    }
+    function paintZip(card, status) {
+      const node = card && card.node;
+      const look = ZIP_LOOK[status];
+      if (!node || !node.style || !look || node.getAttribute(ZIP_MARK) === status) return;
+      node.style.outline = look[0];
+      node.style.outlineOffset = "-3px";
+      node.setAttribute(ZIP_MARK, status);
+      node.setAttribute("title", look[1]);
+    }
+    function clearZipPaint() {
+      for (const node of document.querySelectorAll("[" + ZIP_MARK + "]")) {
+        node.style.outline = "";
+        node.style.outlineOffset = "";
+        node.removeAttribute(ZIP_MARK);
+        node.removeAttribute("title");
+      }
+    }
+    const zipStores = /* @__PURE__ */ new Map();
+    function zipStoreHere() {
+      const key = keyFor2(zipLedgerKey, "qs-intelligence zip ledger this page");
+      if (!zipStores.has(key)) zipStores.set(key, openZipStore(storage, key));
+      return zipStores.get(key);
+    }
+    function zipShowCounts() {
+      if (!opened || !view || mode !== "click") return;
+      const cards = zipCards();
+      const store = zipStoreHere();
+      const ledger = store.read();
+      for (const card of cards) {
+        const held = owns(ledger.cards, card.id) ? ledger.cards[card.id] : null;
+        if (held) paintZip(card, held.status);
+        else if (itemState(card) === "in") paintZip(card, "added");
+      }
+      view.setCounts(zipSummary(zipCounts(cards, ledger, (card) => itemState(card) === "in"), zipAddedCount(ledger)) + (storage && store.saved() ? "" : " \xB7 \u26A0 not saving (storage blocked)"));
+      const odd = Object.keys(ledger.cards).filter((id) => ledger.cards[id].status !== "added").map((id) => {
+        const held = ledger.cards[id];
+        return (held.status === "refused" ? "not clickable   " : "no change       ") + String(held.title || id).slice(0, 80);
+      });
+      if (!odd.length && detailsText.startsWith("Do these by hand")) setDetails("");
+      else if (odd.length) setDetails("Do these by hand:\n" + odd.join("\n"));
+    }
+    function hintsOf(node) {
+      if (!node || typeof node.getAttribute !== "function") return "";
+      return ["aria-label", "title", "rel", "class", "id"].map((name) => node.getAttribute(name) || "").join(" ");
+    }
+    function markedCurrent(node) {
+      for (let at = node, step = 0; at && step < 3; at = at.parentElement, step++) {
+        if (typeof at.getAttribute !== "function") break;
+        const said = at.getAttribute("aria-current");
+        if (said && said !== "false") return true;
+        if (/(^|[-_\s])(active|current|selected|is-active|is-current)([-_\s]|$)/i.test(at.getAttribute("class") || "")) return true;
+      }
+      return false;
+    }
+    function nextControls() {
+      const cards = zipCards();
+      const lastCard = cards.length ? cards[cards.length - 1].node : null;
+      const after = (node) => {
+        if (!lastCard) return true;
+        const where = lastCard.compareDocumentPosition(node);
+        return (where & 4) !== 0 && (where & 16) === 0;
+      };
+      const clickables = Array.prototype.filter.call(
+        document.querySelectorAll('a, button, [role="button"]'),
+        (node) => !isOurs(node) && after(node) && onScreen(node) && collapse(node.textContent || "").length <= 12
+      );
+      let best = null;
+      let bestScore = 0;
+      for (const control2 of clickables) {
+        const words = collapse(control2.textContent || "");
+        if (NOT_NEXT.test(hintsOf(control2)) || NOT_NEXT.test(words)) continue;
+        const label = (control2.getAttribute("aria-label") || "") + " " + (control2.getAttribute("title") || "");
+        let score = 0;
+        if (/(^|\s)next(\s|$)/i.test(control2.getAttribute("rel") || "")) score = 5;
+        else if (/\bnext\b/i.test(label)) score = 4;
+        else if (/next/i.test((control2.getAttribute("class") || "") + " " + (control2.id || "")) || NEXT_TEXT.test(words)) score = 3;
+        if (score > bestScore) {
+          best = control2;
+          bestScore = score;
+        }
+      }
+      if (best) return [{ control: best, how: "the next page button" }];
+      let numbers = [];
+      for (const node of document.querySelectorAll('a, button, [role="button"], li, span')) {
+        if (isOurs(node) || !after(node)) continue;
+        const words = collapse(node.textContent || "");
+        if (!PAGE_NUMBER.test(words)) continue;
+        numbers.push({ control: node.closest('a, button, [role="button"]') || node, value: Number(words) });
+      }
+      numbers = numbers.filter((each, at) => numbers.findIndex((other) => other.control === each.control) === at && !numbers.some((other) => other.control !== each.control && other.value === each.value && each.control.contains(other.control)));
+      if (!numbers.length) return [];
+      let currentPage = numbers.filter((each) => markedCurrent(each.control));
+      if (currentPage.length !== 1 && numbers.length >= 3) {
+        const looks = numbers.map((each) => {
+          try {
+            const style = window.getComputedStyle(each.control);
+            return [style.color, style.fontWeight, style.backgroundColor, style.textDecorationLine].join("|");
+          } catch {
+            return "";
+          }
+        });
+        const odd = numbers.filter((each, at) => looks.filter((look) => look === looks[at]).length === 1);
+        if (odd.length === 1) currentPage = odd;
+      }
+      const highest = Math.max(...numbers.map((each) => each.value));
+      if (currentPage.length === 1 && currentPage[0].value >= highest) return [];
+      const out = [];
+      const lastNumber = numbers[numbers.length - 1].control;
+      const arrow = clickables.filter((control2) => !collapse(control2.textContent || "") && (lastNumber.compareDocumentPosition(control2) & 4) !== 0 && !NOT_NEXT.test(hintsOf(control2)))[0];
+      if (arrow) out.push({ control: arrow, how: "the arrow after the page numbers" });
+      if (currentPage.length === 1) {
+        const target = numbers.filter((each) => each.value === currentPage[0].value + 1)[0];
+        if (target) out.push({ control: target.control, how: "page " + target.value });
+      }
+      return out;
+    }
+    const cardSignature = () => zipCards().map((card) => card.id).join("\n");
+    function turnPage() {
+      const found = nextControls().filter((each) => zipClickable(each.control));
+      if (!found.length) {
+        return Promise.resolve({ pressed: false, why: nextControls().length ? "the next page button is disabled" : "nothing leads further" });
+      }
+      const before = cardSignature();
+      const tryOne = (at) => new Promise((resolve) => {
+        const one = found[at];
+        say(`Page done; next page (${one.how})\u2026`);
+        try {
+          one.control.click();
+        } catch {
+          resolve(false);
+          return;
+        }
+        const start = Date.now();
+        const look = () => {
+          let now = "";
+          try {
+            now = cardSignature();
+          } catch {
+            now = "";
+          }
+          if (now && now !== before) {
+            setTimeout(() => resolve(true), 600);
+            return;
+          }
+          if (Date.now() - start >= NEXT_WAIT_MS) {
+            resolve(false);
+            return;
+          }
+          setTimeout(look, 250);
+        };
+        setTimeout(look, 250);
+      });
+      return (async () => {
+        for (let at = 0; at < found.length && at < 2; at++) {
+          if (await tryOne(at)) return { pressed: true, changed: true, how: found[at].how };
+        }
+        return { pressed: true, changed: false };
+      })();
+    }
+    function zipHolds() {
+      let nodes = [];
+      try {
+        nodes = document.querySelectorAll('button, a, [role="button"], span, div');
+      } catch {
+        nodes = [];
+      }
+      for (const node of nodes) {
+        const text = String(node.textContent || "");
+        if (text.length > 40 || isOurs(node)) continue;
+        const found = HOLDS_TEXT.exec(collapse(text));
+        if (found) return Number(found[1] || found[2]);
+      }
+      return null;
+    }
+    const zipLimitNow = () => view && view.inputs.limit ? readSetting(view.inputs.limit.value, DEFAULT_ZIP_LIMIT, 1, 1e5, true) : readZipLimit(storage, keyFor2(zipLimitKey, ZIP_LIMIT_PREFIX + "this site"));
+    const autoKey = () => keyFor2(zipAutoKey, ZIP_AUTO_PREFIX + "this site");
+    const zipRunner = createClickRunner({
+      page: { cards: zipCards, press: pressZip, paint: paintZip, next: turnPage, state: itemState },
+      get store() {
+        return zipStoreHere();
+      },
+      sleep,
+      get gap() {
+        return learnedHere ? PICKED_GAP : ZIP_GAP;
+      },
+      iso: () => (/* @__PURE__ */ new Date()).toISOString(),
+      where: () => (location.search + location.hash).slice(0, 200),
+      say,
+      showState: (state) => {
+        if (view) view.setPlay(state);
+      },
+      setAuto: (on) => writeZipAuto(storage, autoKey(), on, Date.now()),
+      refresh: zipShowCounts,
+      confirm: () => true,
+      limit: zipLimitNow,
+      zipHolds
+    });
+    let zipWatch = null;
+    let zipSoon = null;
+    let zipIds = "";
+    function watchZip() {
+      if (zipWatch || typeof MutationObserver !== "function") return;
+      try {
+        zipWatch = new MutationObserver((records) => {
+          if (records.every((record) => isOurs(record.target)) || zipSoon) return;
+          zipSoon = setTimeout(() => {
+            zipSoon = null;
+            try {
+              if (mode !== "click") return;
+              const ids = cardSignature();
+              const changed = ids !== zipIds;
+              zipIds = ids;
+              zipShowCounts();
+              if (changed) zipRunner.pageChanged();
+            } catch {
+            }
+          }, 400);
+        });
+        zipWatch.observe(document.body || document.documentElement, { childList: true, subtree: true });
+      } catch {
+        zipWatch = null;
+      }
+    }
+    let picking = null;
+    let disarmPick = null;
+    let hovered = null;
+    function unhover() {
+      if (hovered) {
+        hovered.el.style.outline = hovered.was;
+        hovered = null;
+      }
+    }
+    function onHover(event) {
+      if (!event || isOurs(event.target)) {
+        unhover();
+        return;
+      }
+      const found = picking === "item" ? resolveTarget(event.target) : null;
+      const el = found ? found.node : event.target && event.target.closest ? event.target.closest(CLICKABLE2) || event.target : null;
+      if (!el || hovered && hovered.el === el) return;
+      unhover();
+      hovered = { el, was: el.style.outline };
+      el.style.outline = "2px dashed #ff3b30";
+    }
+    function stopPicking() {
+      if (disarmPick) {
+        disarmPick();
+        disarmPick = null;
+      }
+      if (picking) document.removeEventListener("mouseover", onHover, true);
+      unhover();
+      picking = null;
+      labelPickers();
+    }
+    function labelPickers() {
+      if (!view) return;
+      view.setPickItem(
+        picking === "item" ? "Cancel picking" : !targetRecord ? "\u2610 Pick item" : learnedHere ? `\u2611 Item: ${targetRecord.kind === "box" ? "checkbox" : "button"}` : "\u2611 Item (not on this page)",
+        !!targetRecord && picking !== "item"
+      );
+      view.setPickButton(picking === "button" ? "Cancel picking" : buttonRecord ? "\u2B07 Download button \u2713" : "\u2B07 Download button");
+    }
+    function startPicking(kind, picked) {
+      picking = kind;
+      labelPickers();
+      document.addEventListener("mouseover", onHover, true);
+      disarmPick = armCapture(window, isOurs, (target) => {
+        stopPicking();
+        picked(target);
+      });
+    }
+    function busy() {
+      return runner.state() !== "idle" || zipRunner.state() !== "idle" || selectingAll;
+    }
+    function flash(nodes) {
+      const held = nodes.slice(0, 500).map((node) => ({ node, was: node.style.outline }));
+      for (const each of held) each.node.style.outline = "2px solid #2e7d32";
+      setTimeout(() => {
+        for (const each of held) each.node.style.outline = each.was;
+      }, 1600);
+    }
+    function learnItem(target) {
+      const found = resolveTarget(target);
+      if (!found) {
+        say("Nothing there to learn.");
+        return;
+      }
+      const record = describeTarget(found.node, found.kind);
+      if (!record.chain.length) {
+        say("That can't be found again. Pick something inside the page.");
+        return;
+      }
+      const matches = Array.from(document.getElementsByTagName(record.tag)).filter((el) => !isOurs(el) && matchesTarget(el, record));
+      if (record.kind === "button" && record.words) {
+        const same = matches.filter((el) => buttonWords(labelOf(el)) === record.words).length;
+        if (same < Math.max(2, Math.ceil(matches.length / 2))) record.words = "";
+      }
+      targetRecord = record;
+      const kept = writeTargetRecord(storage, keyFor2(targetKey, TARGET_PREFIX + "this site"), record);
+      clearRowPaint();
+      clearZipPaint();
+      makeReader();
+      rebuild();
+      flash(matches);
+      say(`Learned: ${matches.length} matching ${record.kind === "box" ? "checkbox(es)" : "button(s)"}.` + (record.link ? " They are plain links, so clicking each may open pages." : "") + (kept ? "" : " Storage refused, so it lasts until reload."));
+    }
+    function pickItem() {
+      if (picking === "item") {
+        stopPicking();
+        say("Picking cancelled.");
+        return;
+      }
+      if (busy()) {
+        say("Stop the run first.");
+        return;
+      }
+      stopPicking();
+      say("Click one of the things to click many of: a checkbox or a button.");
+      startPicking("item", learnItem);
+    }
+    function setKind(kind) {
+      if (busy()) {
+        say("Stop the run first.");
+        return;
+      }
+      if (!targetRecord || kind !== "box" && kind !== "button") return;
+      targetRecord = Object.assign({}, targetRecord, { kind });
+      writeTargetRecord(storage, keyFor2(targetKey, TARGET_PREFIX + "this site"), targetRecord);
+      clearRowPaint();
+      clearZipPaint();
+      makeReader();
+      rebuild();
+      say(kind === "box" ? "Ticking these in batches." : "Clicking each of these once.");
+    }
+    function forgetItem() {
+      if (busy()) {
+        say("Stop the run first.");
+        return;
+      }
+      stopPicking();
+      targetRecord = null;
+      writeTargetRecord(storage, keyFor2(targetKey, TARGET_PREFIX + "this site"), null);
+      clearRowPaint();
+      clearZipPaint();
+      makeReader();
+      rebuild();
+      say("Forgot the picked item; finding items automatically.");
+    }
+    function chosenAsButton(target) {
+      if (!target) return;
+      const node = typeof target.closest === "function" ? target.closest(CLICKABLE2) || target : target;
+      liveRows();
+      if (insideRows(node)) {
+        say("That is inside a row. Pick the page's own download button.");
+        return;
+      }
+      const record = describeButton(node);
+      if (!record.words) {
+        say("That has no words to find it by. Pick the download button itself.");
+        return;
+      }
+      buttonRecord = record;
+      buttonCache = null;
+      const kept = writeButtonRecord(storage, keyFor2(buttonKey, BUTTON_PREFIX + "this site"), record);
+      try {
+        node.style.outline = "3px solid #c40";
+      } catch {
+      }
+      labelPickers();
+      sayButtonInUse(kept ? "" : "Storage refused, so it lasts until reload. ");
+    }
+    function pickDownloadButton() {
+      if (picking === "button") {
+        stopPicking();
+        sayButtonInUse("Picking cancelled. ");
+        return;
+      }
+      if (busy()) {
+        say("Stop the run first.");
+        return;
+      }
+      stopPicking();
+      say("Click the page's own download button. That click is kept from the page.");
+      startPicking("button", chosenAsButton);
+    }
+    let selectingAll = false;
+    function selectAll() {
+      stopPicking();
+      if (selectingAll) return;
+      if (runner.state() !== "idle") {
+        say("Pause or Stop the run first.");
+        return;
+      }
+      selectingAll = true;
+      (async () => {
+        try {
+          const done = tickAll(rowsToSelect(liveRows(), formatChoice, startAtNow()), page.usable);
+          if (done.changed) await sleep(0.5);
+          const live = liveRows();
+          const kept = rowsToSelect(live, formatChoice, startAtNow()).filter((each) => isTicked(each.box)).length;
+          const use = buttonInUse();
+          say(selectAllReport(done, kept, use.button ? labelOf(use.button) : ""));
+          showCounts(live);
+        } catch (error) {
+          say("Select all stopped on a script fault: " + (error && error.message ? error.message : String(error)) + ".");
+        } finally {
+          selectingAll = false;
+        }
+      })();
+    }
+    function play() {
+      stopPicking();
+      if (mode === "click") {
+        zipRunner.play();
+        return;
+      }
+      if (runner.state() === "running") runner.pause();
+      else runner.play();
+    }
+    function stop() {
+      stopPicking();
+      if (mode === "click") zipRunner.stop();
+      else runner.stop();
+    }
+    function reset() {
+      stopPicking();
+      const active = mode === "click" ? zipRunner : runner;
+      if (active.state() !== "idle") {
+        say("Stop the run before Reset.");
+        return;
+      }
+      const count = mode === "click" ? Object.keys(zipStoreHere().read().cards).length : (storeHere(), siteTotals(storage, stores, LEDGER_PREFIX).documents);
+      if (!count) {
+        say(mode === "click" ? "The click ledger is already empty." : "The ledger is already empty.");
+        return;
+      }
+      if (Date.now() > resetArmed) {
+        resetArmed = Date.now() + 4e3;
+        if (view) view.setReset("Confirm reset?");
+        say(`Press again to forget ${count} ${mode === "click" ? "item(s)" : "document(s)"} on this site.`);
+        setTimeout(() => {
+          if (view && Date.now() > resetArmed) view.setReset("\u21BA Reset");
+        }, 4100);
+        return;
+      }
+      resetArmed = 0;
+      if (view) view.setReset("\u21BA Reset");
+      if (active.reset()) {
+        if (mode === "click") clearZipPaint();
+        else clearRowPaint();
+      }
+      showCounts();
+    }
+    function setSize(value) {
+      batchSize = readSetting(value, DEFAULT_BATCH, 1, 50, true);
+      if (view && view.inputs.size) view.inputs.size.value = String(batchSize);
+    }
+    function setStart(value) {
+      const start = readSetting(value, 1, 1, 1e6, true);
+      if (view && view.inputs.start) view.inputs.start.value = String(start);
+      const kept = writeStart(storage, keyFor2(startKey, START_PREFIX + "this site"), start);
+      showCounts();
+      say((start > 1 ? `Runs start at row ${start}.` : "Runs start at the first row.") + (kept ? "" : " Storage refused; lasts until reload."));
+    }
+    function setLimit(value) {
+      const limit = readSetting(value, DEFAULT_ZIP_LIMIT, 1, 1e5, true);
+      if (view && view.inputs.limit) view.inputs.limit.value = String(limit);
+      const kept = writeZipLimit(storage, keyFor2(zipLimitKey, ZIP_LIMIT_PREFIX + "this site"), limit);
+      say(`Stops after ${limit}.` + (kept ? "" : " Storage refused; lasts until reload."));
+    }
+    function flipType(format) {
+      const shown = formatCounts(reader.last().map((each) => each.identity)).map((each) => each.format);
+      formatChoice = toggleFormat(formatChoice, format, shown);
+      const kept = writeFormats(storage, keyFor2(formatsKey, FORMATS_PREFIX + "this site"), formatChoice);
+      showCounts();
+      say(describeFormats(formatChoice) + (runner.state() === "idle" ? "" : " From the next batch.") + (kept ? "" : " Storage refused; lasts until reload."));
+    }
+    function readPosition() {
+      try {
+        const held = JSON.parse(storage && storage.getItem(POSITION_KEY) || "null");
+        if (held && Number.isFinite(held.left) && Number.isFinite(held.top) && held.left < window.innerWidth - 40 && held.top < window.innerHeight - 30) {
+          return held;
+        }
+      } catch {
+      }
+      return null;
+    }
+    function savePosition(spot) {
+      try {
+        if (storage) storage.setItem(POSITION_KEY, JSON.stringify(spot));
+      } catch {
+      }
+    }
+    function decideMode() {
+      if (learnedHere) return targetRecord.kind === "box" ? "tick" : "click";
+      if (liveRows().length) return "tick";
+      if (clickControls().length) return "click";
+      return "tick";
+    }
+    function build() {
+      view = createBatchPanel({
+        mode,
+        kind: learnedHere ? targetRecord.kind : null,
+        onKind: setKind,
+        batchSize,
+        startAt: readStart(storage, keyFor2(startKey, START_PREFIX + "this site")),
+        limit: readZipLimit(storage, keyFor2(zipLimitKey, ZIP_LIMIT_PREFIX + "this site")),
+        position: readPosition(),
+        onClose: close,
+        onPlay: play,
+        onStop: stop,
+        onReset: reset,
+        onPickItem: pickItem,
+        onForgetItem: forgetItem,
+        onPickButton: pickDownloadButton,
+        onSelectAll: selectAll,
+        onSize: setSize,
+        onStart: setStart,
+        onLimit: setLimit,
+        onType: flipType
+      });
+      (document.body || document.documentElement).appendChild(view.el);
+      makeDraggable(view.el, view.head, savePosition);
+      view.setPlay(mode === "click" ? zipRunner.state() : runner.state());
+      view.setStatus(statusText);
+      view.setDetails(detailsText);
+      labelPickers();
+    }
+    function rebuild() {
+      if (!opened) return;
+      makeReader();
+      const nextMode = decideMode();
+      if (view) view.el.remove();
+      mode = nextMode;
+      build();
+      if (mode === "click") {
+        clearRowPaint();
+        zipIds = cardSignature();
+        watchZip();
+      } else {
+        clearZipPaint();
+        watchCounts();
+      }
+      showCounts();
+    }
+    function first() {
+      if (mode === "click") {
+        const cards = zipCards().length;
+        say(cards ? `${cards} item(s) to click. Play clicks each, page by page.` : "No items found. Use Pick item.");
+      } else {
+        const rows = reader.last().length;
+        if (rows) sayButtonInUse(`${rows} row(s). `);
+        else say("No rows found yet. Use Pick item, or wait for the page to draw them.");
+      }
+    }
+    let rescans = [];
+    function open() {
+      if (opened) return;
+      opened = true;
+      makeReader();
+      mode = decideMode();
+      statusText = "Ready.";
+      detailsText = "";
+      build();
+      if (mode === "click") {
+        zipIds = cardSignature();
+        watchZip();
+      } else watchCounts();
+      showCounts();
+      first();
+      rescans = [1500, 4e3, 8e3].map((wait) => setTimeout(() => {
+        try {
+          if (!opened || busy() || picking) return;
+          const was = { mode, learnedHere };
+          makeReader();
+          const now = decideMode();
+          if (now !== was.mode || learnedHere !== was.learnedHere) {
+            rebuild();
+            first();
+          } else {
+            showCounts();
+            if (/^No (rows|items) found/.test(statusText)) first();
+          }
+        } catch {
+        }
+      }, wait));
+    }
+    function close() {
+      if (!opened) return true;
+      if (busy()) {
+        say("Stop the run first, then close.");
+        return false;
+      }
+      stopPicking();
+      for (const timer of rescans) clearTimeout(timer);
+      rescans = [];
+      if (countWatch) {
+        try {
+          countWatch.disconnect();
+        } catch {
+        }
+        countWatch = null;
+      }
+      if (zipWatch) {
+        try {
+          zipWatch.disconnect();
+        } catch {
+        }
+        zipWatch = null;
+      }
+      clearTimeout(countsTimer);
+      countsTimer = null;
+      clearRowPaint();
+      clearZipPaint();
+      if (view) view.el.remove();
+      view = null;
+      opened = false;
+      return true;
+    }
+    function repaint2() {
+      if (!opened) return;
+      if (view) view.el.remove();
+      build();
+      showCounts();
+    }
+    function resume() {
+      if (!readZipAuto(storage, autoKey(), Date.now())) return false;
+      open();
+      const tryPlay = () => {
+        if (!opened || zipRunner.state() !== "idle" || !readZipAuto(storage, autoKey(), Date.now())) return;
+        if (mode !== "click") {
+          mode = decideMode();
+          if (mode === "click") rebuild();
+        }
+        if (mode === "click" && zipCards().length) {
+          say("Carrying on from the last page.");
+          zipRunner.play();
+        }
+      };
+      tryPlay();
+      for (const wait of [1500, 4e3, 8e3]) setTimeout(tryPlay, wait);
+      return true;
+    }
+    return {
+      open,
+      close,
+      toggle: () => opened ? close() : (open(), true),
+      isOpen: () => opened,
+      repaint: repaint2,
+      resume
+    };
+  }
+
   // src/main.js
   var gm = createGm();
   var hostname = location.hostname.replace(/^www\./, "");
@@ -1539,6 +5540,10 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
   };
   var activityLog = createActivityLog();
   var undo = createUndoStack();
+  var batch = createBatchTool({
+    version: VERSION,
+    pageWindow: typeof unsafeWindow !== "undefined" ? unsafeWindow : window
+  });
   function domainEntry() {
     return library.domains[hostname] = library.domains[hostname] || { rules: [], restore: {} };
   }
@@ -1797,7 +5802,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
   }
   function checkUpdates() {
     setUpdateState({ state: "checking" });
-    const decide = (remote) => {
+    const decide2 = (remote) => {
       const plan = updatePlan(VERSION, remote);
       if (plan.action === "install") setUpdateState({ state: "available", remote: plan.remote });
       else if (plan.action === "error") setUpdateState({ state: "error" });
@@ -1807,8 +5812,8 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       method: "GET",
       url: RAW_URL + "?t=" + Date.now(),
       // cache-bust GitHub raw
-      onload: (res) => decide(parseVersion(res.responseText)),
-      onerror: () => decide(null)
+      onload: (res) => decide2(parseVersion(res.responseText)),
+      onerror: () => decide2(null)
     });
   }
   function installUpdate() {
@@ -1974,9 +5979,20 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       onRemovePaywall: doRemovePaywall,
       onRevert: doRevert,
       onReveal: doReveal,
-      onSettings: toggleSettings
+      onSettings: toggleSettings,
+      onBatch: toggleBatch,
+      batchOpen: batch.isOpen()
     });
     document.body.appendChild(control);
+  }
+  function toggleBatch() {
+    if (batch.isOpen()) {
+      if (!batch.close()) return;
+    } else {
+      batch.open();
+      menuOpen = false;
+    }
+    refreshControl();
   }
   function toggleMenu() {
     menuOpen = !menuOpen;
@@ -1989,6 +6005,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
   }
   function repaint() {
     refreshControl();
+    batch.repaint();
     if (settingsPanel) reopenSettings();
     if (logPanel) renderLogPanel();
   }
@@ -1997,6 +6014,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     GM_registerMenuCommand("Remove paywall", doRemovePaywall);
     GM_registerMenuCommand("Revert last block", doRevert);
     GM_registerMenuCommand("Reveal deeper (this page)", doReveal);
+    GM_registerMenuCommand("Batch clicker", toggleBatch);
     GM_registerMenuCommand("Settings", toggleSettings);
     GM_registerMenuCommand("Toggle zapper (this site)", toggleSite);
   } catch {
@@ -2010,6 +6028,10 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       runOnce();
       startObserver();
       refreshControl();
+      try {
+        if (batch.resume()) refreshControl();
+      } catch {
+      }
     };
     if (document.body) start();
     else document.addEventListener("DOMContentLoaded", start, { once: true });

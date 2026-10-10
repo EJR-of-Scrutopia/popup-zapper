@@ -98,14 +98,17 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window } = {})
   // ---- the item the person picked, and the reader built on it ----
 
   let targetRecord = readTargetRecord(storage, keyFor(targetKey, TARGET_PREFIX + "this site"));
+  // A picked item is remembered for the whole site but takes over only on a
+  // page where it matches something; elsewhere items are found automatically.
+  let learnedHere = false;
   let reader = null;
   function makeReader() {
-    const source = targetRecord && targetRecord.kind === "box"
+    learnedHere = !!targetRecord && learnedMatches().length > 0;
+    const source = learnedHere && targetRecord.kind === "box"
       ? learnedSource(document, targetRecord, matchesTarget, isOurs)
       : autoSource(document, isOurs);
     reader = createRowReader(document, { now: () => Date.now(), source });
   }
-  makeReader();
 
   const liveRows = () => reader.rows();
   const insideRows = (node) => reader.insideRow(node);
@@ -115,6 +118,7 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window } = {})
     return Array.from(document.getElementsByTagName(targetRecord.tag))
       .filter((el) => !isOurs(el) && matchesTarget(el, targetRecord));
   }
+  makeReader();
 
   // ---- the ledger for the address on screen now ----
 
@@ -284,7 +288,7 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window } = {})
 
   let countWatch = null;
   function touchesBoxes(records) {
-    const selector = targetRecord && targetRecord.kind === "box" ? targetRecord.tag
+    const selector = learnedHere && targetRecord.kind === "box" ? targetRecord.tag
       : 'input[type="checkbox"], [role="checkbox"]';
     return records.some((record) => {
       if (isOurs(record.target)) return false;
@@ -678,7 +682,7 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window } = {})
   // Controls: by their words on automatic (an add control or a done one),
   // or every match of the picked item.
   function clickControls() {
-    if (targetRecord && targetRecord.kind === "button") return learnedMatches();
+    if (learnedHere && targetRecord.kind === "button") return learnedMatches();
     let nodes = [];
     try { nodes = document.querySelectorAll(ZIP_LOOKS); } catch { nodes = []; }
     const found = [];
@@ -753,7 +757,7 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window } = {})
     if (!live) return "other";
     const words = labelOf(live) || String(live.textContent || "");
     if (isInZipText(words)) return "in";
-    if (!targetRecord || targetRecord.kind !== "button") return isAddText(words) ? "ready" : "other";
+    if (!learnedHere || targetRecord.kind !== "button") return isAddText(words) ? "ready" : "other";
     const said = live.getAttribute && (live.getAttribute("aria-pressed") || live.getAttribute("aria-checked"));
     if (said === "true") return "in";
     return !targetRecord.words || buttonWords(words) === targetRecord.words ? "ready" : "other";
@@ -982,7 +986,7 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window } = {})
     page: { cards: zipCards, press: pressZip, paint: paintZip, next: turnPage, state: itemState },
     get store() { return zipStoreHere(); },
     sleep,
-    get gap() { return targetRecord ? PICKED_GAP : ZIP_GAP; },
+    get gap() { return learnedHere ? PICKED_GAP : ZIP_GAP; },
     iso: () => new Date().toISOString(),
     where: () => (location.search + location.hash).slice(0, 200),
     say,
@@ -1051,7 +1055,9 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window } = {})
   function labelPickers() {
     if (!view) return;
     view.setPickItem(picking === "item" ? "Cancel picking"
-      : targetRecord ? `☑ Item: ${targetRecord.kind === "box" ? "checkbox" : "button"}` : "☐ Pick item", !!targetRecord && picking !== "item");
+      : !targetRecord ? "☐ Pick item"
+        : learnedHere ? `☑ Item: ${targetRecord.kind === "box" ? "checkbox" : "button"}` : "☑ Item (not on this page)",
+    !!targetRecord && picking !== "item");
     view.setPickButton(picking === "button" ? "Cancel picking" : buttonRecord ? "⬇ Download button ✓" : "⬇ Download button");
   }
 
@@ -1266,7 +1272,7 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window } = {})
   }
 
   function decideMode() {
-    if (targetRecord) return targetRecord.kind === "box" ? "tick" : "click";
+    if (learnedHere) return targetRecord.kind === "box" ? "tick" : "click";
     if (liveRows().length) return "tick";
     if (clickControls().length) return "click";
     return "tick";
@@ -1275,7 +1281,7 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window } = {})
   function build() {
     view = createBatchPanel({
       mode,
-      kind: targetRecord ? targetRecord.kind : null,
+      kind: learnedHere ? targetRecord.kind : null,
       onKind: setKind,
       batchSize,
       startAt: readStart(storage, keyFor(startKey, START_PREFIX + "this site")),
@@ -1304,6 +1310,7 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window } = {})
 
   function rebuild() {
     if (!opened) return;
+    makeReader();
     const nextMode = decideMode();
     if (view) view.el.remove();
     mode = nextMode;
@@ -1346,9 +1353,11 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window } = {})
     rescans = [1500, 4000, 8000].map((wait) => setTimeout(() => {
       try {
         if (!opened || busy() || picking) return;
-        const was = mode;
+        const was = { mode, learnedHere };
+        makeReader();
         const now = decideMode();
-        if (now !== was) { rebuild(); first(); } else { showCounts(); if (/^No (rows|items) found/.test(statusText)) first(); }
+        if (now !== was.mode || learnedHere !== was.learnedHere) { rebuild(); first(); }
+        else { showCounts(); if (/^No (rows|items) found/.test(statusText)) first(); }
       } catch { /* the page is not to feel it */ }
     }, wait));
   }

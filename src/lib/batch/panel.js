@@ -12,13 +12,18 @@ export function numberStyle(width, t = palette()) {
     .map((rule) => rule + " !important").join(";");
 }
 
+// What pages most often restyle on every button (capitals, spacing, sizes),
+// set inline so a stylesheet's rule cannot reach the panel's own.
+const RESET = "text-transform:none;letter-spacing:normal;line-height:1.3;margin:0;width:auto;height:auto;" +
+  "box-shadow:none;text-shadow:none;float:none;text-align:center;vertical-align:middle;";
+
 function button(t, act, label, handler, title) {
   const b = tag("button", { textContent: label, type: "button" });
   b.setAttribute("data-act", act);
   if (title) b.title = title;
   b.style.cssText =
     `border:1px solid ${t.border};background:${t.head};color:${t.fg};border-radius:5px;` +
-    "padding:3px 8px;cursor:pointer;font:12px sans-serif;box-sizing:border-box;" +
+    RESET + "padding:3px 8px;cursor:pointer;font:12px sans-serif;box-sizing:border-box;" +
     (getTouch() ? "min-height:40px;" : "");
   if (handler) b.addEventListener("click", handler);
   return b;
@@ -43,7 +48,7 @@ function numberField(t, act, label, value, width, handler) {
 }
 
 export function chipStyle(on, t = palette()) {
-  return "padding:1px 8px;border-radius:10px;cursor:pointer;font:11px/1.6 sans-serif;" +
+  return RESET + "padding:1px 8px;border-radius:10px;cursor:pointer;font:11px/1.6 sans-serif;" +
     (on ? `background:${t.accent};color:#fff;border:1px solid ${t.accent};`
       : `background:${t.chip};color:${t.sub};border:1px solid ${t.chipBorder};text-decoration:line-through;`);
 }
@@ -76,7 +81,7 @@ export function createBatchPanel({
   head.appendChild(modeLabel);
   const cls = tag("button", { textContent: "✕", type: "button", title: "Close" });
   cls.setAttribute("data-act", "batch-close");
-  cls.style.cssText = `border:0;background:none;color:${t.fg};font-size:15px;line-height:1;cursor:pointer;padding:0 2px;`;
+  cls.style.cssText = RESET + `border:0;background:none;color:${t.fg};font-size:15px;line-height:1;cursor:pointer;padding:0 2px;`;
   if (onClose) cls.addEventListener("click", onClose);
   head.appendChild(cls);
   panel.appendChild(head);
@@ -89,7 +94,7 @@ export function createBatchPanel({
   const controls = row();
   const play = tag("button", { textContent: "▶ Play", type: "button" });
   play.setAttribute("data-act", "batch-play");
-  play.style.cssText =
+  play.style.cssText = RESET +
     "border:0;border-radius:12px;padding:4px 14px;cursor:pointer;font:bold 12px sans-serif;" +
     `color:#fff;background:${t.accent};min-width:76px;` + (getTouch() ? "min-height:40px;" : "");
   if (onPlay) play.addEventListener("click", onPlay);
@@ -160,7 +165,7 @@ export function createBatchPanel({
       b.setAttribute("data-act", "batch-kind-" + value);
       b.title = value === "box" ? "Tick these in batches and press the page's download button"
         : "Press each of these once, page by page";
-      b.style.cssText = "border:0;padding:3px 10px;cursor:pointer;font:11px sans-serif;" +
+      b.style.cssText = RESET + "border:0;padding:3px 10px;cursor:pointer;font:11px sans-serif;" +
         (i ? `border-left:1px solid ${t.border};` : "") +
         (on ? `background:${t.accent};color:#fff;font-weight:bold;` : `background:${t.head};color:${t.fg};`);
       if (!on && onKind) b.addEventListener("click", () => onKind(value));
@@ -180,7 +185,7 @@ export function createBatchPanel({
   status.setAttribute("data-pz-status", "");
   const more = tag("button", { textContent: "Details ▸", type: "button" });
   more.setAttribute("data-act", "batch-details");
-  more.style.cssText = `display:none;align-self:flex-start;border:0;background:none;padding:0;cursor:pointer;color:${t.sub};font:11px sans-serif;text-decoration:underline;`;
+  more.style.cssText = RESET + `display:none;align-self:flex-start;border:0;background:none;padding:0;cursor:pointer;color:${t.sub};font:11px sans-serif;text-decoration:underline;`;
   const box = tag("pre");
   box.setAttribute("data-pz-details", "");
   box.style.cssText =
