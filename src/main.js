@@ -13,6 +13,7 @@ import { createPicker } from "./lib/picker.js";
 import { createUndoStack } from "./lib/undo.js";
 import { revealDeep, hasResidualGating } from "./lib/reveal.js";
 import { parseVersion, updatePlan } from "./lib/updates.js";
+import { createBatchTool } from "./lib/batch/tool.js";
 import {
   createControlMenu, createSettingsPanel, createPickerToolbar,
   createActivityPanel, createFilterPanel, formatStatus,
@@ -33,6 +34,13 @@ let library = null;
 const persist = () => { saveLibrary((k, v) => gm.set(k, v), library); };
 const activityLog = createActivityLog();
 const undo = createUndoStack();
+
+// The batch clicker watches the page's own fetch/XHR, so it needs the page's
+// window, not the userscript sandbox's.
+const batch = createBatchTool({
+  version: VERSION,
+  pageWindow: typeof unsafeWindow !== "undefined" ? unsafeWindow : window,
+});
 
 function domainEntry() {
   return (library.domains[hostname] = library.domains[hostname] || { rules: [], restore: {} });
@@ -418,8 +426,21 @@ function refreshControl() {
     onRevert: doRevert,
     onReveal: doReveal,
     onSettings: toggleSettings,
+    onBatch: toggleBatch,
+    batchOpen: batch.isOpen(),
   });
   document.body.appendChild(control);
+}
+
+// ---- batch clicker: its own panel, kept open when the menu closes ----
+function toggleBatch() {
+  if (batch.isOpen()) {
+    if (!batch.close()) return; // a run is going; the panel says so
+  } else {
+    batch.open();
+    menuOpen = false;
+  }
+  refreshControl();
 }
 
 // Clicking the badge toggles the menu open/closed. Closing it also dismisses any
@@ -434,6 +455,7 @@ function toggleMenu() {
 // Re-render every open piece of UI so a theme change takes effect at once.
 function repaint() {
   refreshControl();
+  batch.repaint();
   if (settingsPanel) reopenSettings();
   if (logPanel) renderLogPanel();
 }
@@ -444,6 +466,7 @@ try {
   GM_registerMenuCommand("Remove paywall", doRemovePaywall);
   GM_registerMenuCommand("Revert last block", doRevert);
   GM_registerMenuCommand("Reveal deeper (this page)", doReveal);
+  GM_registerMenuCommand("Batch clicker", toggleBatch);
   GM_registerMenuCommand("Settings", toggleSettings);
   GM_registerMenuCommand("Toggle zapper (this site)", toggleSite);
 } catch { /* not available in all managers */ }
@@ -457,7 +480,13 @@ async function bootAsync() {
   setTouch(detectTouch());
   library = await loadLibraryAsync((k) => gm.get(k));
   setTheme(await gm.get(THEME_KEY, "auto"));
-  const start = () => { runOnce(); startObserver(); refreshControl(); };
+  const start = () => {
+    runOnce();
+    startObserver();
+    refreshControl();
+    // A click run left going carries on after the page reloads or moves on.
+    try { if (batch.resume()) refreshControl(); } catch { /* never block the zapper */ }
+  };
   if (document.body) start();
   else document.addEventListener("DOMContentLoaded", start, { once: true });
 }

@@ -1,6 +1,6 @@
 const PREFIX = "pz-";
 
-function tag(name, props = {}, children = []) {
+export function tag(name, props = {}, children = []) {
   const el = document.createElement(name);
   Object.assign(el, props);
   for (const c of children) el.appendChild(c);
@@ -8,7 +8,7 @@ function tag(name, props = {}, children = []) {
 }
 
 // Mark a root element as our own UI so the blocker/learner never act on it.
-function own(el, kind) {
+export function own(el, kind) {
   el.setAttribute("data-pz", kind);
   return el;
 }
@@ -83,7 +83,7 @@ export function formatStatus(action, detail) {
 // dot when something was blocked on this page.
 export function createControlMenu({
   enabled, hostname, open, status, showReveal, blocked,
-  onToggleMenu, onToggleSite, onBlock, onRemovePaywall, onRevert, onReveal, onSettings,
+  onToggleMenu, onToggleSite, onBlock, onRemovePaywall, onRevert, onReveal, onSettings, onBatch, batchOpen,
 }) {
   const t = palette();
   const wrap = own(tag("div", { className: PREFIX + "control" }), "control");
@@ -171,6 +171,7 @@ export function createControlMenu({
   item("block", "🚫  Block a popup", onBlock);
   item("paywall", "🔓  Remove paywall", onRemovePaywall);
   item("revert", "↩️  Revert last block", onRevert);
+  if (onBatch) item("batch", batchOpen ? "☑️  Close batch clicker" : "☑️  Batch clicker", onBatch);
 
   // Status strip: echoes the last action so it's clear something happened.
   const strip = tag("div");
