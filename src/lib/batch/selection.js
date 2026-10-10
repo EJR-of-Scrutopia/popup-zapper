@@ -11,7 +11,8 @@ const SELECTION_WAIT = 5;
 const SELECTION_POLL = 0.05;
 
 export function wordsOf(node) {
-  return collapse(node.innerText || node.value || "");
+  const shown = typeof node.innerText === "string" ? node.innerText : node.textContent;
+  return collapse(shown || node.value || "");
 }
 
 // The batch's row as the page holds it NOW, found by its identity: a page

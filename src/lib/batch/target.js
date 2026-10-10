@@ -13,7 +13,8 @@ export function labelOf(node) {
   if (!node) return "";
   const named = typeof node.getAttribute === "function"
     ? node.getAttribute("aria-label") || node.getAttribute("title") : "";
-  return collapse(node.innerText || node.value || named || "");
+  const shown = typeof node.innerText === "string" ? node.innerText : node.textContent;
+  return collapse(shown || node.value || named || "");
 }
 
 // A button's words without its count: "Download (0)" and "Download (10)" are
