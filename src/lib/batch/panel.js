@@ -49,9 +49,9 @@ export function chipStyle(on, t = palette()) {
 }
 
 export function createBatchPanel({
-  mode = "tick", batchSize = 10, startAt = 1, limit = 50, position = null,
+  mode = "tick", kind = null, batchSize = 10, startAt = 1, limit = 50, position = null,
   onClose, onPlay, onStop, onReset, onPickItem, onForgetItem, onPickButton, onSelectAll,
-  onSize, onStart, onLimit, onType,
+  onSize, onStart, onLimit, onType, onKind,
 }) {
   const t = palette();
   const panel = own(tag("div", { className: "pz-batch" }), "batch");
@@ -148,6 +148,26 @@ export function createBatchPanel({
     teach.appendChild(selectAll);
   }
   body.appendChild(teach);
+
+  // A picked item may be ticked in batches or clicked each once; the guess
+  // from what was clicked can be put right here.
+  if (kind) {
+    const seg = tag("div");
+    seg.style.cssText = `display:flex;align-self:flex-start;border:1px solid ${t.border};border-radius:6px;overflow:hidden;`;
+    [["box", "Tick in batches"], ["button", "Click each"]].forEach(([value, label], i) => {
+      const on = kind === value;
+      const b = tag("button", { textContent: label, type: "button" });
+      b.setAttribute("data-act", "batch-kind-" + value);
+      b.title = value === "box" ? "Tick these in batches and press the page's download button"
+        : "Press each of these once, page by page";
+      b.style.cssText = "border:0;padding:3px 10px;cursor:pointer;font:11px sans-serif;" +
+        (i ? `border-left:1px solid ${t.border};` : "") +
+        (on ? `background:${t.accent};color:#fff;font-weight:bold;` : `background:${t.head};color:${t.fg};`);
+      if (!on && onKind) b.addEventListener("click", () => onKind(value));
+      seg.appendChild(b);
+    });
+    body.appendChild(seg);
+  }
 
   // Strip: counts, status, and details folded away.
   const strip = tag("div");

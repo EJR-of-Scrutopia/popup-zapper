@@ -1107,6 +1107,18 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window } = {})
     startPicking("item", learnItem);
   }
 
+  function setKind(kind) {
+    if (busy()) { say("Stop the run first."); return; }
+    if (!targetRecord || (kind !== "box" && kind !== "button")) return;
+    targetRecord = Object.assign({}, targetRecord, { kind });
+    writeTargetRecord(storage, keyFor(targetKey, TARGET_PREFIX + "this site"), targetRecord);
+    clearRowPaint();
+    clearZipPaint();
+    makeReader();
+    rebuild();
+    say(kind === "box" ? "Ticking these in batches." : "Clicking each of these once.");
+  }
+
   function forgetItem() {
     if (busy()) { say("Stop the run first."); return; }
     stopPicking();
@@ -1263,6 +1275,8 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window } = {})
   function build() {
     view = createBatchPanel({
       mode,
+      kind: targetRecord ? targetRecord.kind : null,
+      onKind: setKind,
       batchSize,
       startAt: readStart(storage, keyFor(startKey, START_PREFIX + "this site")),
       limit: readZipLimit(storage, keyFor(zipLimitKey, ZIP_LIMIT_PREFIX + "this site")),

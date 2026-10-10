@@ -121,6 +121,7 @@ export function describeUse(use, text) {
 export const BOX_LIKE = 'input[type="checkbox"], [role="checkbox"], [role="switch"], [aria-checked]';
 const BUTTON_LIKE = 'button, a[href], [role="button"], input[type="button"], input[type="submit"]';
 const LOOSE_CLICKABLE = '[onclick], [class*="btn"], [class*="button"]';
+const BOX_CLASS = '[class*="check"], [class*="tick"], [class*="toggle"], [class*="switch"]';
 
 // From the element clicked to the thing meant: a label's checkbox, a box, a
 // real button or link, a styled wrapper around one checkbox, or whatever
@@ -139,6 +140,9 @@ export function resolveTarget(el) {
     if (inside.length === 1) return { node: inside[0], kind: "box" };
     if (inside.length > 1) break;
   }
+  // A box drawn from a plain element, known by its class and its few words.
+  const drawn = el.closest(BOX_CLASS);
+  if (drawn && collapse(drawn.textContent).length <= 40) return { node: drawn, kind: "box" };
   return { node: el.closest(LOOSE_CLICKABLE) || el, kind: "button" };
 }
 

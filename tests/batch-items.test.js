@@ -115,6 +115,16 @@ describe("picking an item", () => {
     expect(resolveTarget($("plain"))).toEqual({ node: $("plain"), kind: "button" });
   });
 
+  it("takes a box drawn from a plain element, known by its class, for a checkbox", () => {
+    document.body.innerHTML = `
+      <div class="row"><div class="doc-check"></div><span>Alpha datasheet</span></div>
+      <div class="row"><div class="menu-toggle">Open the whole navigation menu for this website</div></div>`;
+    const drawn = document.querySelector(".doc-check");
+    expect(resolveTarget(drawn)).toEqual({ node: drawn, kind: "box" });
+    // A long-worded element is no box, whatever its class says.
+    expect(resolveTarget(document.querySelector(".menu-toggle")).kind).toBe("button");
+  });
+
   it("a learned box matches its siblings and not the filter panel's boxes", () => {
     customList(6);
     const picked = document.querySelectorAll('[role="checkbox"]')[2];

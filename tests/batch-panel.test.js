@@ -27,6 +27,19 @@ describe("batch panel", () => {
     expect(view.inputs.limit.value).toBe("40");
   });
 
+  it("with a picked item, offers to tick it in batches or click each, the current one lit", () => {
+    const onKind = vi.fn();
+    const view = createBatchPanel({ mode: "tick", kind: "box", onKind });
+    const box = view.el.querySelector("[data-act='batch-kind-box']");
+    const each = view.el.querySelector("[data-act='batch-kind-button']");
+    expect(box.style.fontWeight).toBe("bold");
+    box.click();
+    expect(onKind).not.toHaveBeenCalled();
+    each.click();
+    expect(onKind).toHaveBeenCalledWith("button");
+    expect(createBatchPanel({ mode: "tick" }).el.querySelector("[data-act='batch-kind-box']")).toBeNull();
+  });
+
   it("fires its handlers", () => {
     const h = { onPlay: vi.fn(), onStop: vi.fn(), onReset: vi.fn(), onPickItem: vi.fn(), onPickButton: vi.fn(),
       onSelectAll: vi.fn(), onClose: vi.fn(), onSize: vi.fn() };
