@@ -7,3 +7,4 @@ export * from "./settings.js";
 export * from "./target.js";
 export * from "./selection.js";
 export * from "./runner.js";
+export * from "./pager.js";

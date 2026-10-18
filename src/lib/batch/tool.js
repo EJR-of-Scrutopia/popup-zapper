@@ -25,6 +25,7 @@ import {
   isAddText, isInZipText, zipLedgerKey, openZipStore, zipCounts, zipAddedCount, zipSummary,
 } from "./runner.js";
 import { createBatchPanel, makeDraggable } from "./panel.js";
+import { findNextControls } from "./pager.js";
 
 // The mark left on a row once the ledger knows it, and on an item once handled.
 const MARK = "data-qs-ledger";
@@ -43,9 +44,6 @@ const PICKED_GAP = 0.8;
 const ZIP_RESPONSE_MS = 1500;
 const ZIP_LOOKS = 'button, a, [role="button"], input[type="button"], input[type="submit"], span, div, label, li';
 const NEXT_WAIT_MS = 12000;
-const NEXT_TEXT = /^(next(\s+page)?|>|›|»|→|❯|〉|〉)$/i;
-const NOT_NEXT = /prev|previous|back|first|last/i;
-const PAGE_NUMBER = /^\d{1,3}$/;
 // The site's own count of its zip: "Zip download (16)", "16 items in your zip".
 const HOLDS_TEXT = /zip[^()\d]{0,30}\(\s*(\d+)\s*\)|(\d+)\s*(items?|documents?|files?)?\s*in\s+(your\s+|the\s+)?zip/i;
 const ZIP_LOOK = {
@@ -853,83 +851,11 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window } = {})
     else if (odd.length) setDetails("Do these by hand:\n" + odd.join("\n"));
   }
 
-  function hintsOf(node) {
-    if (!node || typeof node.getAttribute !== "function") return "";
-    return ["aria-label", "title", "rel", "class", "id"].map((name) => node.getAttribute(name) || "").join(" ");
-  }
-
-  function markedCurrent(node) {
-    for (let at = node, step = 0; at && step < 3; at = at.parentElement, step++) {
-      if (typeof at.getAttribute !== "function") break;
-      const said = at.getAttribute("aria-current");
-      if (said && said !== "false") return true;
-      if (/(^|[-_\s])(active|current|selected|is-active|is-current)([-_\s]|$)/i.test(at.getAttribute("class") || "")) return true;
-    }
-    return false;
-  }
-
-  // The next page, best first, only after the last card: rel=next, a label
-  // or class saying next, or words Next / > / an arrow; else the page
-  // numbers (no next when the current is the highest), the wordless arrow
-  // after them, then the number after the current. Never prev/back/first/last.
+  // The next page after the last card; see pager.js.
   function nextControls() {
     const cards = zipCards();
     const lastCard = cards.length ? cards[cards.length - 1].node : null;
-    const after = (node) => {
-      if (!lastCard) return true;
-      const where = lastCard.compareDocumentPosition(node);
-      return (where & 4) !== 0 && (where & 16) === 0;
-    };
-    const clickables = Array.prototype.filter.call(document.querySelectorAll('a, button, [role="button"]'),
-      (node) => !isOurs(node) && after(node) && onScreen(node) && collapse(node.textContent || "").length <= 12);
-    let best = null;
-    let bestScore = 0;
-    for (const control of clickables) {
-      const words = collapse(control.textContent || "");
-      if (NOT_NEXT.test(hintsOf(control)) || NOT_NEXT.test(words)) continue;
-      const label = (control.getAttribute("aria-label") || "") + " " + (control.getAttribute("title") || "");
-      let score = 0;
-      if (/(^|\s)next(\s|$)/i.test(control.getAttribute("rel") || "")) score = 5;
-      else if (/\bnext\b/i.test(label)) score = 4;
-      else if (/next/i.test((control.getAttribute("class") || "") + " " + (control.id || "")) || NEXT_TEXT.test(words)) score = 3;
-      if (score > bestScore) { best = control; bestScore = score; }
-    }
-    if (best) return [{ control: best, how: "the next page button" }];
-
-    let numbers = [];
-    for (const node of document.querySelectorAll('a, button, [role="button"], li, span')) {
-      if (isOurs(node) || !after(node)) continue;
-      const words = collapse(node.textContent || "");
-      if (!PAGE_NUMBER.test(words)) continue;
-      numbers.push({ control: node.closest('a, button, [role="button"]') || node, value: Number(words) });
-    }
-    numbers = numbers.filter((each, at) =>
-      numbers.findIndex((other) => other.control === each.control) === at
-      && !numbers.some((other) => other.control !== each.control && other.value === each.value && each.control.contains(other.control)));
-    if (!numbers.length) return [];
-    let currentPage = numbers.filter((each) => markedCurrent(each.control));
-    if (currentPage.length !== 1 && numbers.length >= 3) {
-      const looks = numbers.map((each) => {
-        try {
-          const style = window.getComputedStyle(each.control);
-          return [style.color, style.fontWeight, style.backgroundColor, style.textDecorationLine].join("|");
-        } catch { return ""; }
-      });
-      const odd = numbers.filter((each, at) => looks.filter((look) => look === looks[at]).length === 1);
-      if (odd.length === 1) currentPage = odd;
-    }
-    const highest = Math.max(...numbers.map((each) => each.value));
-    if (currentPage.length === 1 && currentPage[0].value >= highest) return [];
-    const out = [];
-    const lastNumber = numbers[numbers.length - 1].control;
-    const arrow = clickables.filter((control) => !collapse(control.textContent || "")
-      && (lastNumber.compareDocumentPosition(control) & 4) !== 0 && !NOT_NEXT.test(hintsOf(control)))[0];
-    if (arrow) out.push({ control: arrow, how: "the arrow after the page numbers" });
-    if (currentPage.length === 1) {
-      const target = numbers.filter((each) => each.value === currentPage[0].value + 1)[0];
-      if (target) out.push({ control: target.control, how: "page " + target.value });
-    }
-    return out;
+    return findNextControls(document, lastCard, { isOurs, onScreen, win: window });
   }
 
   const cardSignature = () => zipCards().map((card) => card.id).join("\n");
