@@ -72,7 +72,12 @@ export function rowsFor(doc, target, isOurs = () => false) {
     const link = firstOtherLink(node, control);
     let href = "";
     try { href = link ? shortUrl(link.href, doc.location ? doc.location.href : "") : ""; } catch { href = ""; }
-    return { node, control, title, id: normaliseText(title) + (href ? " | " + href : "") };
+    // For the panel: the card's heading where it has one (a card's text may
+    // open with the same words on every item). The identity stays the text.
+    let heading = null;
+    try { heading = node.querySelector("h1, h2, h3, h4, h5, h6"); } catch { heading = null; }
+    const name = (heading && collapse(heading.textContent).slice(0, 120)) || title;
+    return { node, control, title, name, id: normaliseText(title) + (href ? " | " + href : "") };
   });
   const ids = numberIdentities(raw.map((each) => ({ id: each.id })));
   return raw.map((each, at) => Object.assign(each, { id: ids[at].id }));

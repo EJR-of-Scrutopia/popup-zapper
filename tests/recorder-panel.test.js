@@ -23,18 +23,27 @@ describe("highlighting", () => {
 });
 
 describe("recorder panel", () => {
-  it("offers Back one beside Reset, to have the last finished item done again", () => {
+  it("offers Item back beside Reset, to have the last finished item done again", () => {
     const onBack = vi.fn();
     const view = createRecorderPanel({ onBack });
     const back = act(view.el, "rec-back");
-    expect(back.textContent).toBe("↶ Back one");
+    expect(back.textContent).toBe("↶ Item back");
     back.click();
     expect(onBack).toHaveBeenCalledTimes(1);
   });
 
+  it("offers Step back, to do the step before again", () => {
+    const onStepBack = vi.fn();
+    const view = createRecorderPanel({ onStepBack });
+    const back = act(view.el, "rec-step-back");
+    expect(back.textContent).toBe("↶ Step back");
+    back.click();
+    expect(onStepBack).toHaveBeenCalledTimes(1);
+  });
+
   it("opens with close, record, play, stop, reset and back one first, marked as our own", () => {
     const view = createRecorderPanel({});
-    expect(acts(view.el).slice(0, 6)).toEqual(["rec-close", "rec-record", "rec-play", "rec-stop", "rec-reset", "rec-back"]);
+    expect(acts(view.el).slice(0, 7)).toEqual(["rec-close", "rec-record", "rec-play", "rec-stop", "rec-reset", "rec-back", "rec-step-back"]);
     expect(view.el.getAttribute("data-pz")).toBe("recorder");
     for (const name of ["rec-add-wait", "rec-check-text", "rec-add-check", "rec-skip", "rec-only", "rec-highlight", "rec-pages", "rec-timeout", "rec-export"]) {
       expect(act(view.el, name)).not.toBeNull();

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Popup Zapper
 // @namespace    https://github.com/EJR-of-Scrutopia/popup-zapper
-// @version      2.3.2
+// @version      2.3.3
 // @description  Remove login/consent/newsletter/paywall popups, reveal blurred/gated content, defeat reload traps, learn popups by click, click many checkboxes or buttons in batches, and record one item's clicks to repeat for every item in a list.
 // @author       Param
 // @homepageURL  https://github.com/EJR-of-Scrutopia/popup-zapper
@@ -5914,6 +5914,36 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     if (readyState !== "complete") return false;
     return now - lastChange >= SETTLE_QUIET_MS || now - completeAt >= SETTLE_CAP_MS;
   }
+  function stepBack(run, rec, now) {
+    const refuse = (refused) => ({ run, closing: [], refused });
+    if (run.phase !== "steps") return refuse("No item is under way. Use Item back to do the last one again.");
+    let target = run.at - 1;
+    while (target > 0 && rec.steps[target].kind === "wait") target--;
+    if (target <= 0) return refuse("That is the item's first step. Use Item back to do the whole item again.");
+    const step = rec.steps[target];
+    if (step.kind === "back" || step.kind === "close") {
+      return refuse("A Go back or Close the tab can't be done again. Use Item back to do the whole item again.");
+    }
+    const firstUse = {};
+    rec.steps.forEach((each, at) => {
+      if (!(each.tab in firstUse)) firstUse[each.tab] = at;
+    });
+    const tabs = Object.assign({}, run.tabs);
+    const closing = [];
+    for (const tab of Object.keys(tabs)) {
+      if (firstUse[tab] > target && tabs[tab] !== run.home) {
+        closing.push(tabs[tab]);
+        delete tabs[tab];
+      }
+    }
+    const visits = Object.assign({}, run.visits);
+    delete visits[step.tab];
+    return {
+      refused: "",
+      closing,
+      run: Object.assign({}, run, { at: target, since: now, tabs, visits, opened: run.opened.filter((token) => closing.indexOf(token) < 0) })
+    };
+  }
   function failNote(task, rec) {
     const target = task.step && task.step.target;
     if (!target) return `step ${task.index + 1}: ${task.step.kind} did not finish in ${rec.timeout || 30} s`;
@@ -6018,7 +6048,14 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       } catch {
         href = "";
       }
-      return { node, control: control2, title, id: normaliseText(title) + (href ? " | " + href : "") };
+      let heading = null;
+      try {
+        heading = node.querySelector("h1, h2, h3, h4, h5, h6");
+      } catch {
+        heading = null;
+      }
+      const name = heading && collapse(heading.textContent).slice(0, 120) || title;
+      return { node, control: control2, title, name, id: normaliseText(title) + (href ? " | " + href : "") };
     });
     const ids = numberIdentities(raw.map((each) => ({ id: each.id })));
     return raw.map((each, at) => Object.assign(each, { id: ids[at].id }));
@@ -6211,6 +6248,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     onStop,
     onReset,
     onBack,
+    onStepBack,
     onExport,
     onSelectStep,
     onRemoveStep,
@@ -6253,9 +6291,16 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     controls.appendChild(button2(
       t,
       "rec-back",
-      "\u21B6 Back one",
+      "\u21B6 Item back",
       onBack,
       "Have the last item marked done or skipped done again at the next Play; press again for the one before"
+    ));
+    controls.appendChild(button2(
+      t,
+      "rec-step-back",
+      "\u21B6 Step back",
+      onStepBack,
+      "Do the step before the current one again, for a click the page missed; press again to go further back"
     ));
     body.appendChild(controls);
     const list = tag("div");
@@ -6495,7 +6540,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       const rows = rowsFor(doc, target, isOurs);
       const row3 = rowOf(rows, found.node);
       if (!row3 || rows.length < 2) return { problem: NOT_A_LIST };
-      return { click: Object.assign(base, { target, scope: "row", row: { id: row3.id, title: row3.title } }), rowNode: row3.node };
+      return { click: Object.assign(base, { target, scope: "row", row: { id: row3.id, title: row3.name || row3.title } }), rowNode: row3.node };
     }
     const inRow = !!rowNode && me.visit === draft.rowVisit && rowNode.contains(found.node);
     return { click: Object.assign(base, { target, scope: inRow ? "row" : "page" }), rowNode };
@@ -6823,7 +6868,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
           await commit(live, Object.assign({}, live, { run: startTurning(run2, now) }));
           return;
         }
-        await commit(live, Object.assign({}, live, { run: rowPicked(run2, wanted[0], now) }));
+        await commit(live, Object.assign({}, live, { run: rowPicked(run2, { id: wanted[0].id, title: wanted[0].name || wanted[0].title }, now) }));
         return;
       }
       if (task.type === "unwind") {
@@ -7167,7 +7212,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     async function backOne() {
       const live = await store.readLive();
       if (live.mode === "running") {
-        say("Pause first, then Back one.");
+        say("Pause first, then Item back.");
         return;
       }
       if (live.mode === "recording") {
@@ -7182,7 +7227,28 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       }
       await store.writeLedger(origin2, out.ledger);
       ledgerCache = out.ledger;
-      say(`Back one: "${String(out.row.title).slice(0, 70)}" will be done again.`);
+      say(`Item back: "${String(out.row.title).slice(0, 70)}" will be done again.`);
+    }
+    async function stepBackNow() {
+      const live = await store.readLive();
+      if (live.mode !== "running" && live.mode !== "paused" || !live.run) {
+        say("Nothing is running.");
+        return;
+      }
+      const rec = await store.readRecording(live.run.origin);
+      if (!rec) {
+        say("The recording is missing.");
+        return;
+      }
+      const out = stepBack(live.run, rec, Date.now());
+      if (out.refused) {
+        say(out.refused);
+        return;
+      }
+      const closing = live.closing.slice();
+      for (const token of out.closing) if (closing.indexOf(token) < 0) closing.push(token);
+      await writeFresh(Object.assign({}, live, { run: out.run, closing }));
+      say(`Step back: step ${out.run.at + 1} again, ${describeStep(rec.steps[out.run.at], out.run.at, rec.steps)}.`);
     }
     async function editRecording(change) {
       const live = await store.readLive();
@@ -7242,6 +7308,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
         onStop: run(stop),
         onReset: run(reset),
         onBack: run(backOne),
+        onStepBack: run(stepBackNow),
         onExport: saveExport,
         onSelectStep: (index) => {
           selected = index === selected ? -1 : index;

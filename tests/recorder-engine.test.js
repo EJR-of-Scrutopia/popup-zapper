@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   startRun, currentTask, whoActs, rowPicked, bindTab, advance, rowEnded, startTurning, turnStarted,
   pageTurned, listArrived, resumed, timedOut, failNote, sameList, stopRun, tokenPlan, overdue,
-  adoptToken, beatFresh, tooManyFailures, navigated, pageSettled,
+  adoptToken, beatFresh, tooManyFailures, navigated, pageSettled, stepBack,
 } from "../src/lib/recorder/engine.js";
 
 const A = "https://www.cibse.org";
@@ -210,6 +210,37 @@ describe("runs that go wrong", () => {
     expect(run.navigations).toBe(2);
     expect(listArrived(run, 3).navigations).toBe(0);
     expect(rowPicked(run, row, 3).navigations).toBe(0);
+  });
+});
+
+describe("step back", () => {
+  it("goes back one step, so the tab that did it does it again with a fresh timeout", () => {
+    const run = Object.assign(inSteps(2), { visits: { h: "item-1" }, since: 0 });
+    const out = stepBack(run, rec, 5000);
+    expect(out.refused).toBe("");
+    expect(out.run.at).toBe(1);
+    expect(out.run.visits).toEqual({});
+    expect(out.run.since).toBe(5000);
+  });
+
+  it("passes over waits to the step before them", () => {
+    const run = bindTab(inSteps(4), "b", "N");
+    expect(stepBack(run, rec, 1).run.at).toBe(2);
+  });
+
+  it("closes a tab opened after the step it goes back to, so that step can open a new one", () => {
+    const run = bindTab(inSteps(2), "b", "N");
+    const out = stepBack(run, rec, 1);
+    expect(out.run.at).toBe(1);
+    expect(out.closing).toEqual(["N"]);
+    expect(out.run.tabs).toEqual({ h: "H" });
+    expect(out.run.opened).toEqual([]);
+  });
+
+  it("never goes back to the item click, a Go back or a Close, nor outside an item", () => {
+    expect(stepBack(inSteps(1), rec, 1).refused).toBe("That is the item's first step. Use Item back to do the whole item again.");
+    expect(stepBack(inSteps(5), rec, 1).refused).toBe("A Go back or Close the tab can't be done again. Use Item back to do the whole item again.");
+    expect(stepBack(startRun(rec, me("H"), 0), rec, 1).refused).toBe("No item is under way. Use Item back to do the last one again.");
   });
 });
 

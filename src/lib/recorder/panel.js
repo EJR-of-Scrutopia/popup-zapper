@@ -41,7 +41,7 @@ function field(t, act, label, type, width, title, handler) {
 }
 
 export function createRecorderPanel({
-  position = null, onClose, onRecord, onPlay, onStop, onReset, onBack, onExport,
+  position = null, onClose, onRecord, onPlay, onStop, onReset, onBack, onStepBack, onExport,
   onSelectStep, onRemoveStep, onWaitSeconds, onAddWait, onAddCheck,
   onSkipText, onOnlyText, onHighlight, onPages, onTimeout,
 }) {
@@ -84,8 +84,10 @@ export function createRecorderPanel({
   controls.appendChild(button(t, "rec-stop", "■ Stop", onStop, "Stop the run and close the tabs it opened"));
   const reset = button(t, "rec-reset", "↺ Reset", onReset, "Forget which items are done on this site");
   controls.appendChild(reset);
-  controls.appendChild(button(t, "rec-back", "↶ Back one", onBack,
+  controls.appendChild(button(t, "rec-back", "↶ Item back", onBack,
     "Have the last item marked done or skipped done again at the next Play; press again for the one before"));
+  controls.appendChild(button(t, "rec-step-back", "↶ Step back", onStepBack,
+    "Do the step before the current one again, for a click the page missed; press again to go further back"));
   body.appendChild(controls);
 
   // The steps.

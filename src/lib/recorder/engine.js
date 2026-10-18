@@ -168,6 +168,36 @@ export function pageSettled({ readyState, now, lastChange, completeAt }) {
   return now - lastChange >= SETTLE_QUIET_MS || now - completeAt >= SETTLE_CAP_MS;
 }
 
+// Step back: the run goes back to the step before the current one (over any
+// waits), for a click the page missed. That step's tab may do it again on
+// the same page; a tab first used after it is closed, so the step can open a
+// new one. Never back to the item click, a Go back or a Close.
+export function stepBack(run, rec, now) {
+  const refuse = (refused) => ({ run, closing: [], refused });
+  if (run.phase !== "steps") return refuse("No item is under way. Use Item back to do the last one again.");
+  let target = run.at - 1;
+  while (target > 0 && rec.steps[target].kind === "wait") target--;
+  if (target <= 0) return refuse("That is the item's first step. Use Item back to do the whole item again.");
+  const step = rec.steps[target];
+  if (step.kind === "back" || step.kind === "close") {
+    return refuse("A Go back or Close the tab can't be done again. Use Item back to do the whole item again.");
+  }
+  const firstUse = {};
+  rec.steps.forEach((each, at) => { if (!(each.tab in firstUse)) firstUse[each.tab] = at; });
+  const tabs = Object.assign({}, run.tabs);
+  const closing = [];
+  for (const tab of Object.keys(tabs)) {
+    if (firstUse[tab] > target && tabs[tab] !== run.home) { closing.push(tabs[tab]); delete tabs[tab]; }
+  }
+  const visits = Object.assign({}, run.visits);
+  delete visits[step.tab];
+  return {
+    refused: "",
+    closing,
+    run: Object.assign({}, run, { at: target, since: now, tabs, visits, opened: run.opened.filter((token) => closing.indexOf(token) < 0) }),
+  };
+}
+
 export function failNote(task, rec) {
   const target = task.step && task.step.target;
   if (!target) return `step ${task.index + 1}: ${task.step.kind} did not finish in ${rec.timeout || 30} s`;

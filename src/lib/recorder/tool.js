@@ -12,7 +12,7 @@ import { newDraft, addClick, addBack, finishRecording, removeStep, insertWait, s
 import {
   startRun, currentTask, whoActs, rowPicked, bindTab, advance, rowEnded, listArrived, startTurning, turnStarted,
   pageTurned, resumed, timedOut, failNote, sameList, stopRun, tokenPlan, overdue,
-  adoptToken, beatFresh, tooManyFailures, navigated, pageSettled, FAIL_STREAK_LIMIT, NAVIGATION_LIMIT,
+  adoptToken, beatFresh, tooManyFailures, navigated, pageSettled, stepBack, FAIL_STREAK_LIMIT, NAVIGATION_LIMIT,
 } from "./engine.js";
 import { describeStepTarget, refineWords, rowsFor, rowOf, findInRow, findOnPage, parseWords, wantedRows, pageHasWords } from "./targets.js";
 import { highlightWords, clearHighlights, MARK, SKIP } from "./highlight.js";
@@ -121,7 +121,7 @@ export function stepFromClick(node, me, draft, { doc = document, isOurs = () => 
     const rows = rowsFor(doc, target, isOurs);
     const row = rowOf(rows, found.node);
     if (!row || rows.length < 2) return { problem: NOT_A_LIST };
-    return { click: Object.assign(base, { target, scope: "row", row: { id: row.id, title: row.title } }), rowNode: row.node };
+    return { click: Object.assign(base, { target, scope: "row", row: { id: row.id, title: row.name || row.title } }), rowNode: row.node };
   }
   const inRow = !!rowNode && me.visit === draft.rowVisit && rowNode.contains(found.node);
   return { click: Object.assign(base, { target, scope: inRow ? "row" : "page" }), rowNode };
@@ -429,7 +429,7 @@ export function createRecorderTool({ gm, pageWindow = window, version = "0.0.0",
       }
       const wanted = wantedRows(rows, ledger, rec);
       if (!wanted.length) { await commit(live, Object.assign({}, live, { run: startTurning(run, now) })); return; }
-      await commit(live, Object.assign({}, live, { run: rowPicked(run, wanted[0], now) }));
+      await commit(live, Object.assign({}, live, { run: rowPicked(run, { id: wanted[0].id, title: wanted[0].name || wanted[0].title }, now) }));
       return;
     }
 
@@ -746,19 +746,34 @@ export function createRecorderTool({ gm, pageWindow = window, version = "0.0.0",
     say("Forgot every item; Play starts from the first.");
   }
 
-  // Back one: the last item marked done or skipped is done again at the next
+  // Item back: the last item marked done or skipped is done again at the next
   // Play (one marked done though no file came, say). Each press goes one
   // further back.
   async function backOne() {
     const live = await store.readLive();
-    if (live.mode === "running") { say("Pause first, then Back one."); return; }
+    if (live.mode === "running") { say("Pause first, then Item back."); return; }
     if (live.mode === "recording") { say("Stop recording first."); return; }
     const origin = recOriginOf(live);
     const out = undoLast(await store.readLedger(origin));
     if (!out.row) { say("Nothing done or skipped to take back."); return; }
     await store.writeLedger(origin, out.ledger);
     ledgerCache = out.ledger;
-    say(`Back one: "${String(out.row.title).slice(0, 70)}" will be done again.`);
+    say(`Item back: "${String(out.row.title).slice(0, 70)}" will be done again.`);
+  }
+
+  // Step back: the item under way goes back one step (engine.js stepBack),
+  // running or paused; tabs opened after that step close themselves.
+  async function stepBackNow() {
+    const live = await store.readLive();
+    if ((live.mode !== "running" && live.mode !== "paused") || !live.run) { say("Nothing is running."); return; }
+    const rec = await store.readRecording(live.run.origin);
+    if (!rec) { say("The recording is missing."); return; }
+    const out = stepBack(live.run, rec, Date.now());
+    if (out.refused) { say(out.refused); return; }
+    const closing = live.closing.slice();
+    for (const token of out.closing) if (closing.indexOf(token) < 0) closing.push(token);
+    await writeFresh(Object.assign({}, live, { run: out.run, closing }));
+    say(`Step back: step ${out.run.at + 1} again, ${describeStep(rec.steps[out.run.at], out.run.at, rec.steps)}.`);
   }
 
   async function editRecording(change) {
@@ -812,6 +827,7 @@ export function createRecorderTool({ gm, pageWindow = window, version = "0.0.0",
       onStop: run(stop),
       onReset: run(reset),
       onBack: run(backOne),
+      onStepBack: run(stepBackNow),
       onExport: saveExport,
       onSelectStep: (index) => { selected = index === selected ? -1 : index; render(liveCache, recCache, ledgerCache); },
       onRemoveStep: (index) => run(() => editRecording((rec) => removeStep(rec, index)))(),

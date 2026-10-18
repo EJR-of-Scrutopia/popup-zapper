@@ -104,9 +104,12 @@ it with **⏺ Steps** on the Batch clicker, or the **Step recorder** menu comman
   items' own words, and **Highlight** marks words on every page.
 - A step whose button does not show within **Step timeout** fails that item and the
   run goes on; three failures in a row (a lapsed login, say) stop the run. The next
-  Play tries failed items again. **↶ Back one** takes back the last item marked done
+  Play tries failed items again. **↶ Item back** takes back the last item marked done
   or skipped (one with no file, say) so the next Play does it again; each press goes
-  one further back. **Reset** forgets which items are done (press twice).
+  one further back. **↶ Step back**, running or paused, sends the item under way back
+  one step (over any waits) for a click the page missed; it never goes back to the
+  item's first click, a Go back or a Close. **Reset** forgets which items are done
+  (press twice).
   **Export** saves the steps and the ledger as JSON; send that file when a site does
   not behave.
 - If the run's own tab is closed, the other tabs stop taking steps; after a browser

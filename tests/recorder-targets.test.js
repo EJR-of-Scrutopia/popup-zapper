@@ -45,6 +45,16 @@ describe("rows of a list", () => {
     expect(rows[1].control).toBe(buttons[1]);
   });
 
+  it("names each item by its heading, for the panel, leaving its identity as it was", () => {
+    const buttons = cibse();
+    const rows = rowsFor(document, targetOf(buttons[0]), isOurs);
+    expect(rows[1].name).toBe("TM59 Overheating risk in dwellings 2026");
+    expect(rows[1].id).toContain("members from free");
+    document.body.innerHTML = `<ul><li><a class="go" href="/a">Open</a> First plain item text</li><li><a class="go" href="/b">Open</a> Second plain item text</li></ul>`;
+    const plain = rowsFor(document, targetOf(document.querySelector("a.go")), isOurs);
+    expect(plain[0].name).toBe(plain[0].title);
+  });
+
   it("places a clicked button in its row", () => {
     const buttons = cibse();
     const rows = rowsFor(document, targetOf(buttons[0]), isOurs);

@@ -39,7 +39,7 @@ describe("building a step from a click", () => {
     expect(out.problem).toBeUndefined();
     expect(out.click.scope).toBe("row");
     expect(out.click.target.words).toBe("access now");
-    expect(out.click.row.title).toContain("Guide D1");
+    expect(out.click.row.title).toBe("Guide D1 Transportation");
     expect(out.rowNode.tagName).toBe("ARTICLE");
   });
 
@@ -129,7 +129,7 @@ describe("the recorder tool", () => {
     tool.dispose();
   });
 
-  it("Back one forgets the last finished item and names it, but never while a run goes", async () => {
+  it("Item back forgets the last finished item and names it, but never while a run goes", async () => {
     const gm = fakeGm();
     const origin = location.origin;
     gm.values["pz-rec ledger " + origin] = JSON.stringify({ rows: {
@@ -142,12 +142,37 @@ describe("the recorder tool", () => {
     panel.querySelector('[data-act="rec-back"]').click();
     await new Promise((done) => setTimeout(done, 20));
     expect(Object.keys(JSON.parse(gm.values["pz-rec ledger " + origin]).rows)).toEqual(["a"]);
-    expect(panel.textContent).toContain('Back one: "Guide D15" will be done again.');
+    expect(panel.textContent).toContain('Item back: "Guide D15" will be done again.');
     gm.values["pz-rec live"] = JSON.stringify({ mode: "running", closing: [], note: "", run: { origin, tabs: {}, opened: [], home: "x" } });
     panel.querySelector('[data-act="rec-back"]').click();
     await new Promise((done) => setTimeout(done, 20));
     expect(Object.keys(JSON.parse(gm.values["pz-rec ledger " + origin]).rows)).toEqual(["a"]);
-    expect(panel.textContent).toContain("Pause first, then Back one.");
+    expect(panel.textContent).toContain("Pause first, then Item back.");
+    tool.close();
+    tool.dispose();
+  });
+
+  it("Step back sends a running item back one step and says which", async () => {
+    const gm = fakeGm();
+    const origin = location.origin;
+    const click = (tab, text, extra = {}) => Object.assign({ kind: "click", tab, origin, path: "/", visit: "r", target: { tag: "a", text, words: text.toLowerCase(), chain: [] }, scope: "page", afterLoad: false, opens: false }, extra);
+    gm.values["pz-rec recording " + origin] = JSON.stringify({
+      origin, homeTab: "h", timeout: 60, steps: [click("h", "Access Now", { scope: "row" }), click("h", "Download", { afterLoad: true }), click("h", "Yes, I agree")],
+    });
+    gm.values["pz-rec live"] = JSON.stringify({ mode: "paused", closing: [], note: "", rev: 4, run: {
+      origin, homeTab: "h", home: "H", phase: "steps", at: 2, row: { id: "d16", title: "Guide D16" }, listUrl: origin + "/", page: 1,
+      tabs: { h: "H" }, opened: [], visits: { h: "v-item" }, since: 0, turnFrom: null,
+    } });
+    const tool = createRecorderTool({ gm, version: "test" });
+    tool.open();
+    const panel = document.querySelector('[data-pz="recorder"]');
+    panel.querySelector('[data-act="rec-step-back"]').click();
+    await new Promise((done) => setTimeout(done, 20));
+    const live = JSON.parse(gm.values["pz-rec live"]);
+    expect(live.run.at).toBe(1);
+    expect(live.run.visits).toEqual({});
+    expect(live.mode).toBe("paused");
+    expect(panel.textContent).toContain('Step back: step 2 again, Click "Download".');
     tool.close();
     tool.dispose();
   });
