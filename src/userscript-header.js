@@ -5,7 +5,7 @@ export function buildHeader(version) {
 // @name         Popup Zapper
 // @namespace    https://github.com/EJR-of-Scrutopia/popup-zapper
 // @version      ${version}
-// @description  Remove login/consent/newsletter/paywall popups, reveal blurred/gated content, defeat reload traps, learn popups by click, and click many checkboxes or buttons in batches.
+// @description  Remove login/consent/newsletter/paywall popups, reveal blurred/gated content, defeat reload traps, learn popups by click, click many checkboxes or buttons in batches, and record one item's clicks to repeat for every item in a list.
 // @author       Param
 // @homepageURL  https://github.com/EJR-of-Scrutopia/popup-zapper
 // @supportURL   https://github.com/EJR-of-Scrutopia/popup-zapper/issues
@@ -27,6 +27,8 @@ export function buildHeader(version) {
 // @grant        GM.openInTab
 // @grant        GM.addStyle
 // @grant        unsafeWindow
+// @grant        window.close
+// @grant        window.focus
 // @connect      *
 // @noframes
 // ==/UserScript==

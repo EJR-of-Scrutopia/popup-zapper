@@ -11,7 +11,7 @@ describe("batch panel", () => {
     const view = createBatchPanel({ mode: "tick", batchSize: 10, startAt: 3 });
     expect(acts(view.el)).toEqual([
       "batch-close", "batch-play", "batch-stop", "batch-reset", "batch-size", "batch-start",
-      "batch-pick-item", "batch-forget-item", "batch-pick-button", "batch-select-all", "batch-details",
+      "batch-pick-item", "batch-forget-item", "batch-pick-button", "batch-select-all", "batch-steps", "batch-details",
     ]);
     expect(view.inputs.size.value).toBe("10");
     expect(view.inputs.start.value).toBe("3");
@@ -22,7 +22,7 @@ describe("batch panel", () => {
     const view = createBatchPanel({ mode: "click", limit: 40 });
     expect(acts(view.el)).toEqual([
       "batch-close", "batch-play", "batch-stop", "batch-reset", "batch-limit",
-      "batch-pick-item", "batch-forget-item", "batch-details",
+      "batch-pick-item", "batch-forget-item", "batch-steps", "batch-details",
     ]);
     expect(view.inputs.limit.value).toBe("40");
   });

@@ -21,4 +21,9 @@ describe("buildHeader", () => {
     expect(header).toContain("// @grant        GM.openInTab");
     expect(header).toContain("// @grant        GM.addStyle");
   });
+  it("lets a tab the step recorder opened close itself, and the home tab come to the front", () => {
+    const header = buildHeader("9.9.9");
+    expect(header).toContain("// @grant        window.close");
+    expect(header).toContain("// @grant        window.focus");
+  });
 });

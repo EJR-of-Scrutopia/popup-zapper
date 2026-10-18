@@ -83,6 +83,33 @@ pages where every item has its own "Add to zip" or "Add to basket" button.
 
 Allow automatic downloads for the site, and keep the tab in front while it runs.
 
+## Step recorder
+
+For libraries where each document takes a chain of clicks across pages and tabs (open
+the item, open its viewer in a new tab, press download, close the viewer, go back). Open
+it with **⏺ Steps** on the Batch clicker, or the **Step recorder** menu command.
+
+- **Record**, then do one item by hand, starting with its button in the list. Every
+  click and every Back is noted, on any site and in any tab it opens. Press **Stop
+  recording** when you are back on the list. The recorder learns that the button you
+  pressed is the same one on every other item. A tab you closed becomes *wait 5 s,
+  close the tab*.
+- **Play** repeats the steps for every item not yet done, then presses the list's
+  next page and carries on until the last page (or **Pages**). Tabs the run opens close
+  themselves. Done items fade, skipped ones get a red outline and failed ones amber.
+  **Pause** and **Stop** work from any tab.
+- Edit the steps: choose one, then **＋ Wait** adds a wait after it, or type some words
+  and press **＋ Skip if** to skip any item whose page at that step says them. **✕**
+  removes a step. **Skip items with** and **Only items with** filter the list by the
+  items' own words, and **Highlight** marks words on every page.
+- A step whose button does not show within **Step timeout** fails that item and the
+  run goes on. The next Play tries failed items again. **Reset** forgets which items
+  are done (press twice). **Export** saves the steps and the ledger as JSON; send that
+  file when a site does not behave.
+
+Turn off *Ask where to save each file*, allow automatic downloads for the viewer's
+site, and log in before you record.
+
 ## Develop
 
 - `npm test` — run unit tests

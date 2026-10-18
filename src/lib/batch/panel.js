@@ -56,7 +56,7 @@ export function chipStyle(on, t = palette()) {
 export function createBatchPanel({
   mode = "tick", kind = null, batchSize = 10, startAt = 1, limit = 50, position = null,
   onClose, onPlay, onStop, onReset, onPickItem, onForgetItem, onPickButton, onSelectAll,
-  onSize, onStart, onLimit, onType, onKind,
+  onSize, onStart, onLimit, onType, onKind, onSteps,
 }) {
   const t = palette();
   const panel = own(tag("div", { className: "pz-batch" }), "batch");
@@ -152,6 +152,8 @@ export function createBatchPanel({
       "Tick every row a run would take, and leave the download to you");
     teach.appendChild(selectAll);
   }
+  teach.appendChild(button(t, "batch-steps", "⏺ Steps", onSteps,
+    "Open the step recorder: do one item by hand, then repeat it for every item"));
   body.appendChild(teach);
 
   // A picked item may be ticked in batches or clicked each once; the guess

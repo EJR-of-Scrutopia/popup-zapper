@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Popup Zapper
 // @namespace    https://github.com/EJR-of-Scrutopia/popup-zapper
-// @version      2.2.0
-// @description  Remove login/consent/newsletter/paywall popups, reveal blurred/gated content, defeat reload traps, learn popups by click, and click many checkboxes or buttons in batches.
+// @version      2.3.0
+// @description  Remove login/consent/newsletter/paywall popups, reveal blurred/gated content, defeat reload traps, learn popups by click, click many checkboxes or buttons in batches, and record one item's clicks to repeat for every item in a list.
 // @author       Param
 // @homepageURL  https://github.com/EJR-of-Scrutopia/popup-zapper
 // @supportURL   https://github.com/EJR-of-Scrutopia/popup-zapper/issues
@@ -24,6 +24,8 @@
 // @grant        GM.openInTab
 // @grant        GM.addStyle
 // @grant        unsafeWindow
+// @grant        window.close
+// @grant        window.focus
 // @connect      *
 // @noframes
 // ==/UserScript==
@@ -89,6 +91,17 @@
       if (has("GM_setValue")) return void env.GM_setValue(key, val);
       if (env.localStorage) return void env.localStorage.setItem(key, val);
     }
+    function getNow(key) {
+      return has("GM_getValue") ? env.GM_getValue(key) : void 0;
+    }
+    function setNow(key, val) {
+      if (has("GM_setValue")) {
+        env.GM_setValue(key, val);
+        return true;
+      }
+      set(key, val);
+      return false;
+    }
     function xhr(details) {
       if (has("GM_xmlhttpRequest")) return env.GM_xmlhttpRequest(details);
       if (gmNs && typeof gmNs.xmlHttpRequest === "function") return gmNs.xmlHttpRequest(details);
@@ -111,7 +124,7 @@
       }
       if (env.location) env.location.href = url;
     }
-    return { get, set, xhr, clipboard, openTab };
+    return { get, set, getNow, setNow, xhr, clipboard, openTab };
   }
 
   // src/lib/rules.js
@@ -1201,7 +1214,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
   }
   var BLOCKS = /^(ADDRESS|ARTICLE|ASIDE|BLOCKQUOTE|BR|DD|DIV|DL|DT|FIELDSET|FIGCAPTION|FIGURE|FOOTER|FORM|H[1-6]|HEADER|HR|LI|MAIN|NAV|OL|P|PRE|SECTION|TABLE|TBODY|TD|TFOOT|TH|THEAD|TR|UL)$/;
   var SILENT = /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|SVG)$/;
-  function rowText(row2) {
+  function rowText(row3) {
     const parts = [];
     const walk = (node, depth) => {
       if (depth > 40) return;
@@ -1218,7 +1231,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
         }
       }
     };
-    walk(row2, 0);
+    walk(row3, 0);
     return parts.join("");
   }
   var assumed = /* @__PURE__ */ new WeakMap();
@@ -1345,15 +1358,15 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       return null;
     }
     function climbLearned(box) {
-      let row2 = null;
+      let row3 = null;
       let node = box;
       for (let step = 0; step < ROW_DEPTH; step++) {
         const up = node.parentElement;
         if (!up || up === doc.body || up === doc.documentElement || source.within(up) > 1) break;
-        row2 = node = up;
+        row3 = node = up;
       }
-      if (!row2) row2 = box.parentElement || box;
-      return { row: row2, text: rowText(row2), format: formatFromSignals(rowFacts(row2).signals) };
+      if (!row3) row3 = box.parentElement || box;
+      return { row: row3, text: rowText(row3), format: formatFromSignals(rowFacts(row3).signals) };
     }
     function climb(box) {
       return source.learned ? climbLearned(box) : climbDocument(box);
@@ -1371,24 +1384,24 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       found.set(box, fresh ? { row: fresh.row, format: fresh.format || "" } : { row: null, at: now() });
       return fresh;
     }
-    function identityOf(row2, content, walked) {
-      let seen = known.get(row2);
+    function identityOf(row3, content, walked) {
+      let seen = known.get(row3);
       if (!seen || seen.content !== content) {
-        seen = { content, identity: rowIdentity(walked !== null ? walked : rowText(row2)) };
-        known.set(row2, seen);
+        seen = { content, identity: rowIdentity(walked !== null ? walked : rowText(row3)) };
+        known.set(row3, seen);
       }
       return seen.identity;
     }
     function read(box) {
       const hit = rowFor(box);
       if (!hit) return null;
-      const row2 = hit.row;
-      if (box.hidden === true || row2.hidden === true) return null;
-      rowSet.add(row2);
-      const base = identityOf(row2, row2.textContent || "", hit.text);
+      const row3 = hit.row;
+      if (box.hidden === true || row3.hidden === true) return null;
+      rowSet.add(row3);
+      const base = identityOf(row3, row3.textContent || "", hit.text);
       return {
         box,
-        row: row2,
+        row: row3,
         base: !base.format && hit.format ? Object.assign({}, base, { format: hit.format }) : base
       };
     }
@@ -1458,8 +1471,8 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
   function owns(object, name) {
     return Object.prototype.hasOwnProperty.call(object, name);
   }
-  function putRow(rows, id, row2) {
-    Object.defineProperty(rows, id, { value: row2, enumerable: true, writable: true, configurable: true });
+  function putRow(rows, id, row3) {
+    Object.defineProperty(rows, id, { value: row3, enumerable: true, writable: true, configurable: true });
   }
   function isStatus(value) {
     return value === "confirmed" || value === "unconfirmed";
@@ -1490,8 +1503,8 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       return ledger;
     }
     for (const id of Object.keys(held.rows)) {
-      const row2 = held.rows[id];
-      if (row2 && typeof row2 === "object" && isStatus(row2.status)) putRow(ledger.rows, id, row2);
+      const row3 = held.rows[id];
+      if (row3 && typeof row3 === "object" && isStatus(row3.status)) putRow(ledger.rows, id, row3);
     }
     ledger.nextBatch = wholeNumber(held.nextBatch, 1);
     if (Array.isArray(held.batches)) {
@@ -1511,7 +1524,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
   function betterRow(held, other) {
     if (!held) return other;
     if (!other) return held;
-    const rank = (row2) => row2.status === "confirmed" ? 1 : 0;
+    const rank = (row3) => row3.status === "confirmed" ? 1 : 0;
     if (rank(held) !== rank(other)) return rank(held) > rank(other) ? held : other;
     return String(other.at) > String(held.at) ? other : held;
   }
@@ -1684,21 +1697,21 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     for (const ledger of ledgers) {
       const address = String(ledger.key || "").slice(LEDGER_PREFIX.length);
       for (const id of Object.keys(ledger.rows)) {
-        const row2 = ledger.rows[id];
+        const row3 = ledger.rows[id];
         const line = {
-          title: String(row2.title || ""),
-          format: row2.format || "",
-          size: row2.size || "",
-          status: row2.status,
-          batch: row2.batch,
-          at: row2.at,
-          tries: row2.tries,
-          where: row2.where || "",
+          title: String(row3.title || ""),
+          format: row3.format || "",
+          size: row3.size || "",
+          status: row3.status,
+          batch: row3.batch,
+          at: row3.at,
+          tries: row3.tries,
+          where: row3.where || "",
           address,
           id
         };
-        if (row2.status === "confirmed") confirmed.push(line);
-        if (row2.status === "unconfirmed") unconfirmed.push(line);
+        if (row3.status === "confirmed") confirmed.push(line);
+        if (row3.status === "unconfirmed") unconfirmed.push(line);
       }
     }
     const byTitle = (a, b) => {
@@ -2034,8 +2047,8 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
 
   // src/lib/batch/wrappers.js
   function methodOf(input, init) {
-    const named = init && init.method || input && typeof input === "object" && input.method || "GET";
-    return String(named).toUpperCase();
+    const named2 = init && init.method || input && typeof input === "object" && input.method || "GET";
+    return String(named2).toUpperCase();
   }
   function urlOf(input) {
     if (typeof input === "string") return input;
@@ -2545,9 +2558,9 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
   var STATE_CLASS = /(^|[-_])(is|has)[-_]|active|checked|selected|disabled|hover|focus|open|added|current|loading|ticked|visited/i;
   function labelOf(node) {
     if (!node) return "";
-    const named = typeof node.getAttribute === "function" ? node.getAttribute("aria-label") || node.getAttribute("title") : "";
+    const named2 = typeof node.getAttribute === "function" ? node.getAttribute("aria-label") || node.getAttribute("title") : "";
     const shown = typeof node.innerText === "string" ? node.innerText : node.textContent;
-    return collapse(shown || node.value || named || "");
+    return collapse(shown || node.value || named2 || "");
   }
   function buttonWords(text) {
     return collapse(String(text == null ? "" : text).replace(/[\d()[\]{}:]+/g, " ")).toLowerCase();
@@ -2619,10 +2632,10 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     return { button: fallback, source: fallback ? "automatic" : "none", lost: !!record };
   }
   function describeUse(use, text) {
-    const named = text ? ' "' + collapse(text).slice(0, 30) + '"' : "";
-    if (use && use.source === "selected") return "Download button: yours" + named + ".";
+    const named2 = text ? ' "' + collapse(text).slice(0, 30) + '"' : "";
+    if (use && use.source === "selected") return "Download button: yours" + named2 + ".";
     if (use && use.source === "automatic") {
-      return (use.lost ? "Your download button isn't here; using" : "Download button: found") + named + ".";
+      return (use.lost ? "Your download button isn't here; using" : "Download button: found") + named2 + ".";
     }
     return (use && use.lost ? "Your download button isn't here." : "No download button found.") + " Pick it with \u2B07.";
   }
@@ -2637,8 +2650,8 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     if (control2 && String(control2.type).toLowerCase() === "checkbox") return { node: control2, kind: "box" };
     const box = el.closest(BOX_LIKE);
     if (box) return { node: box, kind: "box" };
-    const button2 = el.closest(BUTTON_LIKE);
-    if (button2) return { node: button2, kind: "button" };
+    const button3 = el.closest(BUTTON_LIKE);
+    if (button3) return { node: button3, kind: "button" };
     for (let at = el, step = 0; at && step < 3; at = at.parentElement, step++) {
       const inside = typeof at.querySelectorAll === "function" ? at.querySelectorAll('input[type="checkbox"]') : [];
       if (inside.length === 1) return { node: inside[0], kind: "box" };
@@ -2750,9 +2763,9 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     for (const each of live) if (each.box === chosen.box) return each;
     return null;
   }
-  function isReady(button2) {
-    if (!button2 || button2.disabled === true) return false;
-    const said = typeof button2.getAttribute === "function" ? button2.getAttribute("aria-disabled") : null;
+  function isReady(button3) {
+    if (!button3 || button3.disabled === true) return false;
+    const said = typeof button3.getAttribute === "function" ? button3.getAttribute("aria-disabled") : null;
     return said !== "true";
   }
   function setTicked(each, wanted) {
@@ -2770,12 +2783,12 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       if (found) setTicked(found, false);
     }
   }
-  function selectionProblem(size, button2, count, missing, reclicked, strays) {
+  function selectionProblem(size, button3, count, missing, reclicked, strays) {
     const said = [];
-    if (!button2) said.push("no download button (pick one with \u2B07)");
-    else if (!isReady(button2)) said.push("the download button stayed disabled");
+    if (!button3) said.push("no download button (pick one with \u2B07)");
+    else if (!isReady(button3)) said.push("the download button stayed disabled");
     if (count !== null && count !== size) {
-      said.push(`the button reads "${wordsOf(button2)}" for a batch of ${size}` + (count > size ? "; clear other ticks by hand" : ""));
+      said.push(`the button reads "${wordsOf(button3)}" for a batch of ${size}` + (count > size ? "; clear other ticks by hand" : ""));
     }
     if (missing) said.push(`${missing} row(s) gone`);
     if (reclicked) said.push(`${reclicked} box(es) would not stay ticked`);
@@ -2825,12 +2838,12 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
             strays++;
           }
         }
-        const button2 = env.button(everyRow) || null;
-        const count = button2 ? countFromButtonText(wordsOf(button2)) : null;
-        if (isReady(button2) && !missing && !reclicked && !strays && (count === null || count === chosen.length)) {
-          return { ok: true, halted: false, button: button2, count };
+        const button3 = env.button(everyRow) || null;
+        const count = button3 ? countFromButtonText(wordsOf(button3)) : null;
+        if (isReady(button3) && !missing && !reclicked && !strays && (count === null || count === chosen.length)) {
+          return { ok: true, halted: false, button: button3, count };
         }
-        problem = selectionProblem(chosen.length, button2, count, missing, reclicked, strays);
+        problem = selectionProblem(chosen.length, button3, count, missing, reclicked, strays);
         if (env.now() >= until) break;
         await env.sleep(SELECTION_POLL);
       }
@@ -2864,7 +2877,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     }
     return done;
   }
-  function selectAllReport(done, kept, button2) {
+  function selectAllReport(done, kept, button3) {
     if (done.untick) return `Unticked ${done.changed}.` + (kept ? ` ${kept} stayed ticked: press again.` : "");
     if (!done.rows) return "No rows to select.";
     const wanted = done.rows - done.passed;
@@ -2872,8 +2885,8 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     if (kept < wanted) {
       return `Only ${kept} of ${wanted} stayed ticked${passed}. Press again; if it will not rise, the page caps a selection, so use Play.`;
     }
-    const named = collapse(button2).slice(0, 30);
-    return `Selected ${kept} of ${done.rows}${passed}. Now press the page's download button` + (named ? ` ("${named}")` : "") + ".";
+    const named2 = collapse(button3).slice(0, 30);
+    return `Selected ${kept} of ${done.rows}${passed}. Now press the page's download button` + (named2 ? ` ("${named2}")` : "") + ".";
   }
 
   // src/lib/batch/runner.js
@@ -2926,8 +2939,8 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       const byId = new Map(live.map((each) => [each.identity.id, each]));
       const out = [];
       for (let at = 0; at < eligible.length && out.length < size; at++) {
-        const row2 = byId.get(eligible[at].id);
-        const fit = row2 ? quietly(() => deps.page.usable(row2)) : false;
+        const row3 = byId.get(eligible[at].id);
+        const fit = row3 ? quietly(() => deps.page.usable(row3)) : false;
         if (fit !== false) out.push(eligible[at]);
       }
       return out;
@@ -3657,20 +3670,20 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       style: `font-weight:bold;color:${t.fg};margin:6px 0 4px;`
     }));
     const addRule = (rule, scope) => {
-      const row2 = tag("div");
-      row2.style.cssText = "display:flex;gap:6px;align-items:center;margin:4px 0;";
+      const row3 = tag("div");
+      row3.style.cssText = "display:flex;gap:6px;align-items:center;margin:4px 0;";
       const cb = tag("input", { type: "checkbox", checked: rule.enabled !== false });
       cb.setAttribute("data-act", "toggle-rule");
       cb.addEventListener("change", () => onToggleRule({ rule, scope, enabled: cb.checked }));
-      row2.appendChild(cb);
-      row2.appendChild(tag("span", {
+      row3.appendChild(cb);
+      row3.appendChild(tag("span", {
         textContent: `${rule.type} \u201C${rule.value}\u201D \xB7 ${scope === "global" ? "all sites" : "this site"}`,
         style: "flex:1;word-break:break-all;color:" + (rule.enabled === false ? t.sub : t.fg)
       }));
-      row2.appendChild(btn("Edit", "edit-rule", () => onEditRule({ rule, scope })));
-      row2.appendChild(btn("Delete", "delete-rule", () => onDeleteRule({ rule, scope })));
-      if (scope === "site") row2.appendChild(btn("Make global", "promote-rule", () => onPromoteRule({ rule })));
-      panel.appendChild(row2);
+      row3.appendChild(btn("Edit", "edit-rule", () => onEditRule({ rule, scope })));
+      row3.appendChild(btn("Delete", "delete-rule", () => onDeleteRule({ rule, scope })));
+      if (scope === "site") row3.appendChild(btn("Make global", "promote-rule", () => onPromoteRule({ rule })));
+      panel.appendChild(row3);
     };
     const globals = library2.global || [];
     const dom = (library2.domains || {})[hostname2] || {};
@@ -3908,7 +3921,8 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     onStart,
     onLimit,
     onType,
-    onKind
+    onKind,
+    onSteps
   }) {
     const t = palette();
     const panel = own(tag("div", { className: "pz-batch" }), "batch");
@@ -4000,6 +4014,13 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       );
       teach.appendChild(selectAll);
     }
+    teach.appendChild(button(
+      t,
+      "batch-steps",
+      "\u23FA Steps",
+      onSteps,
+      "Open the step recorder: do one item by hand, then repeat it for every item"
+    ));
     body.appendChild(teach);
     if (kind) {
       const seg = tag("div");
@@ -4122,6 +4143,84 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     });
   }
 
+  // src/lib/batch/pager.js
+  var NEXT_TEXT = /^(next(\s+page)?|>|›|»|→|❯|〉|〉)$/i;
+  var NOT_NEXT = /prev|previous|back|first|last/i;
+  var PAGE_NUMBER = /^\d{1,3}$/;
+  function hintsOf(node) {
+    if (!node || typeof node.getAttribute !== "function") return "";
+    return ["aria-label", "title", "rel", "class", "id"].map((name) => node.getAttribute(name) || "").join(" ");
+  }
+  function markedCurrent(node) {
+    for (let at = node, step = 0; at && step < 3; at = at.parentElement, step++) {
+      if (typeof at.getAttribute !== "function") break;
+      const said = at.getAttribute("aria-current");
+      if (said && said !== "false") return true;
+      if (/(^|[-_\s])(active|current|selected|is-active|is-current)([-_\s]|$)/i.test(at.getAttribute("class") || "")) return true;
+    }
+    return false;
+  }
+  function findNextControls(doc, lastNode, { isOurs = () => false, onScreen: onScreen3 = () => true, win = window } = {}) {
+    const after = (node) => {
+      if (!lastNode) return true;
+      const where = lastNode.compareDocumentPosition(node);
+      return (where & 4) !== 0 && (where & 16) === 0;
+    };
+    const clickables = Array.prototype.filter.call(
+      doc.querySelectorAll('a, button, [role="button"]'),
+      (node) => !isOurs(node) && after(node) && onScreen3(node) && collapse(node.textContent || "").length <= 12
+    );
+    let best = null;
+    let bestScore = 0;
+    for (const control2 of clickables) {
+      const words = collapse(control2.textContent || "");
+      if (NOT_NEXT.test(hintsOf(control2)) || NOT_NEXT.test(words)) continue;
+      const label = (control2.getAttribute("aria-label") || "") + " " + (control2.getAttribute("title") || "");
+      let score = 0;
+      if (/(^|\s)next(\s|$)/i.test(control2.getAttribute("rel") || "")) score = 5;
+      else if (/\bnext\b/i.test(label)) score = 4;
+      else if (/next/i.test((control2.getAttribute("class") || "") + " " + (control2.id || "")) || NEXT_TEXT.test(words)) score = 3;
+      if (score > bestScore) {
+        best = control2;
+        bestScore = score;
+      }
+    }
+    if (best) return [{ control: best, how: "the next page button" }];
+    let numbers = [];
+    for (const node of doc.querySelectorAll('a, button, [role="button"], li, span')) {
+      if (isOurs(node) || !after(node)) continue;
+      const words = collapse(node.textContent || "");
+      if (!PAGE_NUMBER.test(words)) continue;
+      numbers.push({ control: node.closest('a, button, [role="button"]') || node, value: Number(words) });
+    }
+    numbers = numbers.filter((each, at) => numbers.findIndex((other) => other.control === each.control) === at && !numbers.some((other) => other.control !== each.control && other.value === each.value && each.control.contains(other.control)));
+    if (!numbers.length) return [];
+    let currentPage = numbers.filter((each) => markedCurrent(each.control));
+    if (currentPage.length !== 1 && numbers.length >= 3) {
+      const looks = numbers.map((each) => {
+        try {
+          const style = win.getComputedStyle(each.control);
+          return [style.color, style.fontWeight, style.backgroundColor, style.textDecorationLine].join("|");
+        } catch {
+          return "";
+        }
+      });
+      const odd = numbers.filter((each, at) => looks.filter((look) => look === looks[at]).length === 1);
+      if (odd.length === 1) currentPage = odd;
+    }
+    const highest = Math.max(...numbers.map((each) => each.value));
+    if (currentPage.length === 1 && currentPage[0].value >= highest) return [];
+    const out = [];
+    const lastNumber = numbers[numbers.length - 1].control;
+    const arrow = clickables.filter((control2) => !collapse(control2.textContent || "") && (lastNumber.compareDocumentPosition(control2) & 4) !== 0 && !NOT_NEXT.test(hintsOf(control2)))[0];
+    if (arrow) out.push({ control: arrow, how: "the arrow after the page numbers" });
+    if (currentPage.length === 1) {
+      const target = numbers.filter((each) => each.value === currentPage[0].value + 1)[0];
+      if (target) out.push({ control: target.control, how: "page " + target.value });
+    }
+    return out;
+  }
+
   // src/lib/batch/tool.js
   var MARK = "data-qs-ledger";
   var ZIP_MARK = "data-qs-zip";
@@ -4133,9 +4232,6 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
   var ZIP_RESPONSE_MS = 1500;
   var ZIP_LOOKS = 'button, a, [role="button"], input[type="button"], input[type="submit"], span, div, label, li';
   var NEXT_WAIT_MS = 12e3;
-  var NEXT_TEXT = /^(next(\s+page)?|>|›|»|→|❯|〉|〉)$/i;
-  var NOT_NEXT = /prev|previous|back|first|last/i;
-  var PAGE_NUMBER = /^\d{1,3}$/;
   var HOLDS_TEXT = /zip[^()\d]{0,30}\(\s*(\d+)\s*\)|(\d+)\s*(items?|documents?|files?)?\s*in\s+(your\s+|the\s+)?zip/i;
   var ZIP_LOOK = {
     added: ["3px solid #2e7d32", "Done"],
@@ -4161,7 +4257,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     const box = node.getBoundingClientRect();
     return box.width > 0 && box.height > 0;
   }
-  function createBatchTool({ version = "0.0.0", pageWindow = window } = {}) {
+  function createBatchTool({ version = "0.0.0", pageWindow: pageWindow2 = window, onSteps = null } = {}) {
     let storage = null;
     try {
       storage = window.localStorage;
@@ -4248,8 +4344,8 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
         let candidates = [];
         try {
           candidates = Array.from(document.getElementsByTagName(record.chain[0].tag)).filter((node) => {
-            const named = typeof node.getAttribute === "function" ? (node.getAttribute("aria-label") || "") + " " + (node.getAttribute("title") || "") : "";
-            return normaliseText(String(node.textContent || node.value || "") + " " + named).indexOf(first2) >= 0;
+            const named2 = typeof node.getAttribute === "function" ? (node.getAttribute("aria-label") || "") + " " + (node.getAttribute("title") || "") : "";
+            return normaliseText(String(node.textContent || node.value || "") + " " + named2).indexOf(first2) >= 0;
           });
         } catch {
           candidates = [];
@@ -4631,7 +4727,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       },
       untick: (chosen) => untickChosen(chosen, { rows: liveRows }),
       // A styled checkbox may be hidden behind its label: the row showing is enough.
-      usable: (row2) => row2.box.disabled !== true && (onScreen(row2.box) || onScreen(row2.row)),
+      usable: (row3) => row3.box.disabled !== true && (onScreen(row3.box) || onScreen(row3.row)),
       quiet: (halted) => waitForQuiet(() => pageChangedAt, Date.now(), () => Date.now(), sleep, QUIET_MS, QUIET_CAP_MS, halted),
       explainNoRows,
       async loadMore(halted) {
@@ -4721,8 +4817,8 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       begin() {
         setDetails("");
         if (!wrapped) {
-          wrapped = installWrappers(pageWindow, sink);
-          installStartWrappers(pageWindow, sink);
+          wrapped = installWrappers(pageWindow2, sink);
+          installStartWrappers(pageWindow2, sink);
         }
         listenForHandOver();
         watchCounts();
@@ -4916,80 +5012,10 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       if (!odd.length && detailsText.startsWith("Do these by hand")) setDetails("");
       else if (odd.length) setDetails("Do these by hand:\n" + odd.join("\n"));
     }
-    function hintsOf(node) {
-      if (!node || typeof node.getAttribute !== "function") return "";
-      return ["aria-label", "title", "rel", "class", "id"].map((name) => node.getAttribute(name) || "").join(" ");
-    }
-    function markedCurrent(node) {
-      for (let at = node, step = 0; at && step < 3; at = at.parentElement, step++) {
-        if (typeof at.getAttribute !== "function") break;
-        const said = at.getAttribute("aria-current");
-        if (said && said !== "false") return true;
-        if (/(^|[-_\s])(active|current|selected|is-active|is-current)([-_\s]|$)/i.test(at.getAttribute("class") || "")) return true;
-      }
-      return false;
-    }
     function nextControls() {
       const cards = zipCards();
       const lastCard = cards.length ? cards[cards.length - 1].node : null;
-      const after = (node) => {
-        if (!lastCard) return true;
-        const where = lastCard.compareDocumentPosition(node);
-        return (where & 4) !== 0 && (where & 16) === 0;
-      };
-      const clickables = Array.prototype.filter.call(
-        document.querySelectorAll('a, button, [role="button"]'),
-        (node) => !isOurs(node) && after(node) && onScreen(node) && collapse(node.textContent || "").length <= 12
-      );
-      let best = null;
-      let bestScore = 0;
-      for (const control2 of clickables) {
-        const words = collapse(control2.textContent || "");
-        if (NOT_NEXT.test(hintsOf(control2)) || NOT_NEXT.test(words)) continue;
-        const label = (control2.getAttribute("aria-label") || "") + " " + (control2.getAttribute("title") || "");
-        let score = 0;
-        if (/(^|\s)next(\s|$)/i.test(control2.getAttribute("rel") || "")) score = 5;
-        else if (/\bnext\b/i.test(label)) score = 4;
-        else if (/next/i.test((control2.getAttribute("class") || "") + " " + (control2.id || "")) || NEXT_TEXT.test(words)) score = 3;
-        if (score > bestScore) {
-          best = control2;
-          bestScore = score;
-        }
-      }
-      if (best) return [{ control: best, how: "the next page button" }];
-      let numbers = [];
-      for (const node of document.querySelectorAll('a, button, [role="button"], li, span')) {
-        if (isOurs(node) || !after(node)) continue;
-        const words = collapse(node.textContent || "");
-        if (!PAGE_NUMBER.test(words)) continue;
-        numbers.push({ control: node.closest('a, button, [role="button"]') || node, value: Number(words) });
-      }
-      numbers = numbers.filter((each, at) => numbers.findIndex((other) => other.control === each.control) === at && !numbers.some((other) => other.control !== each.control && other.value === each.value && each.control.contains(other.control)));
-      if (!numbers.length) return [];
-      let currentPage = numbers.filter((each) => markedCurrent(each.control));
-      if (currentPage.length !== 1 && numbers.length >= 3) {
-        const looks = numbers.map((each) => {
-          try {
-            const style = window.getComputedStyle(each.control);
-            return [style.color, style.fontWeight, style.backgroundColor, style.textDecorationLine].join("|");
-          } catch {
-            return "";
-          }
-        });
-        const odd = numbers.filter((each, at) => looks.filter((look) => look === looks[at]).length === 1);
-        if (odd.length === 1) currentPage = odd;
-      }
-      const highest = Math.max(...numbers.map((each) => each.value));
-      if (currentPage.length === 1 && currentPage[0].value >= highest) return [];
-      const out = [];
-      const lastNumber = numbers[numbers.length - 1].control;
-      const arrow = clickables.filter((control2) => !collapse(control2.textContent || "") && (lastNumber.compareDocumentPosition(control2) & 4) !== 0 && !NOT_NEXT.test(hintsOf(control2)))[0];
-      if (arrow) out.push({ control: arrow, how: "the arrow after the page numbers" });
-      if (currentPage.length === 1) {
-        const target = numbers.filter((each) => each.value === currentPage[0].value + 1)[0];
-        if (target) out.push({ control: target.control, how: "page " + target.value });
-      }
-      return out;
+      return findNextControls(document, lastCard, { isOurs, onScreen, win: window });
     }
     const cardSignature = () => zipCards().map((card) => card.id).join("\n");
     function turnPage() {
@@ -5394,7 +5420,8 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
         onSize: setSize,
         onStart: setStart,
         onLimit: setLimit,
-        onType: flipType
+        onType: flipType,
+        onSteps
       });
       (document.body || document.documentElement).appendChild(view.el);
       makeDraggable(view.el, view.head, savePosition);
@@ -5528,6 +5555,1601 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     };
   }
 
+  // src/lib/recorder/store.js
+  var LIVE = "pz-rec live";
+  var LEAVING = "pz-rec leaving";
+  var RECORDING = "pz-rec recording ";
+  var LEDGER = "pz-rec ledger ";
+  var owns2 = (object, key) => !!object && Object.prototype.hasOwnProperty.call(object, key);
+  function parse(raw) {
+    if (typeof raw !== "string" || !raw) return null;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+  function isObject(value) {
+    return !!value && typeof value === "object" && !Array.isArray(value);
+  }
+  function asLive(value) {
+    if (!isObject(value) || typeof value.mode !== "string") return { mode: "idle", closing: [], note: "" };
+    return Object.assign({}, value, {
+      closing: Array.isArray(value.closing) ? value.closing : [],
+      note: typeof value.note === "string" ? value.note : ""
+    });
+  }
+  function asLedger(value) {
+    return isObject(value) && isObject(value.rows) ? value : { rows: {} };
+  }
+  function createRecorderStore(gm2) {
+    const read = async (key) => parse(await gm2.get(key, null));
+    const write = (key, value) => gm2.set(key, value === null ? "" : JSON.stringify(value));
+    return {
+      readLive: async () => asLive(await read(LIVE)),
+      // Null when the manager cannot read at once.
+      readLiveNow() {
+        const raw = gm2.getNow(LIVE);
+        return raw === void 0 ? null : asLive(parse(raw));
+      },
+      writeLive: (live) => write(LIVE, live),
+      writeLiveNow: (live) => gm2.setNow(LIVE, JSON.stringify(live)),
+      readLeaving: async () => {
+        const value = await read(LEAVING);
+        return isObject(value) && typeof value.token === "string" ? value : null;
+      },
+      writeLeavingNow: (leaving) => gm2.setNow(LEAVING, JSON.stringify(leaving)),
+      readRecording: async (origin2) => {
+        const value = await read(RECORDING + origin2);
+        return isObject(value) && Array.isArray(value.steps) ? value : null;
+      },
+      writeRecording: (origin2, rec) => write(RECORDING + origin2, rec),
+      readLedger: async (origin2) => asLedger(await read(LEDGER + origin2)),
+      writeLedger: (origin2, ledger) => write(LEDGER + origin2, ledger)
+    };
+  }
+  function markRow(ledger, id, { status, title, note = "", at, page }) {
+    const rows = Object.assign({}, ledger.rows, { [id]: { status, title: String(title || "").slice(0, 200), note, at, page } });
+    return Object.assign({}, ledger, { rows });
+  }
+  function ledgerTally(ledger) {
+    const tally = { done: 0, skipped: 0, failed: 0 };
+    for (const id of Object.keys(ledger.rows)) {
+      const status = ledger.rows[id].status;
+      if (owns2(tally, status)) tally[status] += 1;
+    }
+    return tally;
+  }
+  function forgetFailed(ledger) {
+    const rows = {};
+    for (const id of Object.keys(ledger.rows)) if (ledger.rows[id].status !== "failed") rows[id] = ledger.rows[id];
+    return Object.assign({}, ledger, { rows });
+  }
+  function ledgerLines(ledger) {
+    return Object.keys(ledger.rows).filter((id) => ledger.rows[id].status !== "done").map((id) => {
+      const held = ledger.rows[id];
+      return (held.status + "        ").slice(0, 8) + " " + String(held.title || id).slice(0, 80) + (held.note ? ": " + held.note : "");
+    });
+  }
+
+  // src/lib/recorder/steps.js
+  var DEFAULT_LINGER = 5;
+  var DEFAULT_TIMEOUT2 = 30;
+  function newDraft({ origin: origin2, listUrl, homeTab, visit }) {
+    return { origin: origin2, listUrl, homeTab, steps: [], firstRow: null, rowVisit: null, lastTab: homeTab, lastVisit: visit };
+  }
+  function lastInTab(steps, tab) {
+    for (let at = steps.length - 1; at >= 0; at--) if (steps[at].tab === tab) return steps[at];
+    return null;
+  }
+  function addClick(draft, { tab, origin: origin2, path, visit, target, scope, row: row3 }) {
+    const before = lastInTab(draft.steps, tab);
+    const afterLoad = !!before && (before.kind === "back" || before.visit !== visit);
+    const step = { kind: "click", tab, origin: origin2, path, visit, target, scope: scope === "row" ? "row" : "page", afterLoad, opens: false };
+    const next = Object.assign({}, draft, { steps: draft.steps.concat([step]), lastTab: tab, lastVisit: visit });
+    if (!draft.steps.length && step.scope === "row" && row3) {
+      next.firstRow = { id: row3.id, title: row3.title };
+      next.rowVisit = visit;
+    }
+    return next;
+  }
+  function addBack(draft, { tab, origin: origin2, visit }) {
+    if (!draft.steps.length) return draft;
+    const step = { kind: "back", tab, origin: origin2, visit };
+    return Object.assign({}, draft, { steps: draft.steps.concat([step]), lastTab: tab, lastVisit: visit });
+  }
+  function finishRecording(draft, previous, { linger = DEFAULT_LINGER, now = Date.now() } = {}) {
+    const steps = draft && draft.steps || [];
+    if (!steps.length) return { recording: null, problem: "Nothing was recorded." };
+    if (steps[0].kind !== "click" || steps[0].scope !== "row") {
+      return { recording: null, problem: "Start with a click on an item in the list." };
+    }
+    const home = draft.homeTab;
+    const out = [];
+    const seen = /* @__PURE__ */ new Set([home]);
+    const opened = [];
+    const closed = /* @__PURE__ */ new Set();
+    const closeGone = (from) => {
+      const gone = opened.filter((tab) => !closed.has(tab) && !steps.slice(from).some((step) => step.tab === tab));
+      gone.forEach((tab, at) => {
+        if (at === 0) out.push({ kind: "wait", tab, seconds: linger });
+        out.push({ kind: "close", tab });
+        closed.add(tab);
+      });
+    };
+    steps.forEach((original, at) => {
+      if (at > 0 && original.tab !== steps[at - 1].tab) closeGone(at);
+      const step = Object.assign({}, original);
+      if (step.kind === "click") {
+        const next = steps[at + 1];
+        step.opens = !!next && !seen.has(next.tab) && !steps.slice(0, at + 1).some((each) => each.tab === next.tab);
+      }
+      if (!seen.has(step.tab)) {
+        seen.add(step.tab);
+        opened.push(step.tab);
+      }
+      out.push(step);
+    });
+    closeGone(steps.length);
+    const kept = previous || {};
+    return {
+      problem: "",
+      recording: {
+        version: 1,
+        id: draft.origin + " " + new Date(now).toISOString(),
+        origin: draft.origin,
+        listUrl: draft.listUrl,
+        homeTab: home,
+        steps: out,
+        firstRow: draft.firstRow,
+        createdAt: new Date(now).toISOString(),
+        skipText: typeof kept.skipText === "string" ? kept.skipText : "",
+        onlyText: typeof kept.onlyText === "string" ? kept.onlyText : "",
+        highlight: typeof kept.highlight === "string" ? kept.highlight : "",
+        pages: Number.isFinite(kept.pages) ? kept.pages : 0,
+        timeout: Number.isFinite(kept.timeout) ? kept.timeout : DEFAULT_TIMEOUT2
+      }
+    };
+  }
+  function withSteps(rec, steps) {
+    return Object.assign({}, rec, { steps });
+  }
+  function removeStep(rec, index) {
+    if (!rec || index <= 0 || index >= rec.steps.length) return rec;
+    return withSteps(rec, rec.steps.filter((step, at) => at !== index));
+  }
+  function insertWait(rec, after, seconds = 3) {
+    if (!rec || after < 0 || after >= rec.steps.length) return rec;
+    const steps = rec.steps.slice();
+    steps.splice(after + 1, 0, { kind: "wait", tab: steps[after].tab, seconds });
+    return withSteps(rec, steps);
+  }
+  function setWait(rec, index, seconds) {
+    const step = rec && rec.steps[index];
+    const value = parseFloat(String(seconds));
+    if (!step || step.kind !== "wait" || !Number.isFinite(value)) return rec;
+    const steps = rec.steps.slice();
+    steps[index] = Object.assign({}, step, { seconds: Math.min(600, Math.max(0, value)) });
+    return withSteps(rec, steps);
+  }
+  function insertCheck(rec, before, text) {
+    const words = String(text == null ? "" : text).trim();
+    const step = rec && rec.steps[before];
+    if (!words || !step || before <= 0) return rec;
+    const steps = rec.steps.slice();
+    steps.splice(before, 0, { kind: "check", tab: step.tab, origin: step.origin || "", text: words, afterLoad: !!step.afterLoad });
+    return withSteps(rec, steps);
+  }
+  function tabNumbers(steps) {
+    const order = [];
+    for (const step of steps) if (order.indexOf(step.tab) < 0) order.push(step.tab);
+    return order;
+  }
+  function named(target) {
+    const words = target ? target.text || target.words || "" : "";
+    return words ? `"${words}"` : `the ${target && target.tag || "element"}`;
+  }
+  function describeStep(step, index, steps) {
+    const number = tabNumbers(steps).indexOf(step.tab) + 1;
+    const lead = number > 1 ? `Tab ${number}: ` : "";
+    if (step.kind === "click") {
+      if (index === 0) return `Click ${named(step.target)} on each item`;
+      return lead + `Click ${named(step.target)}` + (step.scope === "row" ? " in the item" : "") + (step.opens ? " (opens a tab)" : "");
+    }
+    if (step.kind === "back") return lead + "Go back";
+    if (step.kind === "wait") return lead + `Wait ${step.seconds} s`;
+    if (step.kind === "close") return lead + "Close the tab";
+    if (step.kind === "check") return lead + `Skip the item if the page says "${step.text}"`;
+    return lead + step.kind;
+  }
+
+  // src/lib/recorder/engine.js
+  var LIST_WAIT_MS = 15e3;
+  var PAGE_WAIT_MS = 2e4;
+  var FRESH_SLACK_MS = 1e3;
+  var no = { mine: false, bind: false, skip: false };
+  function startRun(rec, me, now) {
+    return {
+      origin: rec.origin,
+      homeTab: rec.homeTab,
+      home: me.token,
+      phase: "row",
+      at: 0,
+      row: null,
+      listUrl: me.href,
+      page: 1,
+      tabs: { [rec.homeTab]: me.token },
+      opened: [],
+      visits: {},
+      since: now,
+      turnFrom: null
+    };
+  }
+  function currentTask(run, rec) {
+    if (run.phase === "row") return { type: "pick-row" };
+    if (run.phase === "turning") return run.turnFrom ? { type: "await-page" } : { type: "turn-page" };
+    if (run.phase === "steps") {
+      const step = rec.steps[run.at];
+      if (step) return { type: "step", step, index: run.at };
+    }
+    return { type: "unwind" };
+  }
+  function whoActs(run, rec, me, task) {
+    if (me.holdUntil && me.holdUntil > me.now) return no;
+    const home = me.token === run.home;
+    if (task.type !== "step") return home ? { mine: true, bind: false, skip: false } : no;
+    const step = task.step;
+    const bound = run.tabs[step.tab];
+    if (bound) {
+      if (bound !== me.token) return no;
+      if (step.afterLoad && run.visits[step.tab] === me.visit) return no;
+      if ((step.kind === "click" || step.kind === "check") && step.origin && step.origin !== me.origin) return no;
+      return { mine: true, bind: false, skip: false };
+    }
+    if (step.kind === "click" || step.kind === "check") {
+      const taken = Object.keys(run.tabs).some((tab) => run.tabs[tab] === me.token);
+      if (!taken && me.origin === step.origin && me.startedAt >= run.since - FRESH_SLACK_MS) {
+        return { mine: true, bind: true, skip: false };
+      }
+      return no;
+    }
+    return home ? { mine: true, bind: false, skip: true } : no;
+  }
+  function rowPicked(run, row3, now) {
+    return Object.assign({}, run, { phase: "steps", at: 0, row: { id: row3.id, title: row3.title }, since: now });
+  }
+  function bindTab(run, recTab, token) {
+    const opened = token !== run.home && run.opened.indexOf(token) < 0 ? run.opened.concat([token]) : run.opened;
+    return Object.assign({}, run, { tabs: Object.assign({}, run.tabs, { [recTab]: token }), opened });
+  }
+  function advance(run, rec, me, now) {
+    const step = rec.steps[run.at];
+    const next = Object.assign({}, run, { at: run.at + 1, since: now });
+    if (step && (step.kind === "click" || step.kind === "back")) {
+      next.visits = Object.assign({}, run.visits, { [step.tab]: me.visit });
+    }
+    if (step && step.kind === "close") {
+      const token = run.tabs[step.tab];
+      next.tabs = Object.assign({}, run.tabs);
+      delete next.tabs[step.tab];
+      next.opened = run.opened.filter((each) => each !== token);
+    }
+    return { run: next, finished: next.at >= rec.steps.length };
+  }
+  function rowEnded(run, now) {
+    return {
+      closing: run.opened.slice(),
+      run: Object.assign({}, run, {
+        phase: "unwind",
+        at: 0,
+        row: null,
+        tabs: { [run.homeTab]: run.home },
+        opened: [],
+        visits: {},
+        since: now
+      })
+    };
+  }
+  function listArrived(run, now) {
+    return Object.assign({}, run, { phase: "row", since: now, turnFrom: null });
+  }
+  function startTurning(run, now) {
+    return Object.assign({}, run, { phase: "turning", turnFrom: null, since: now });
+  }
+  function turnStarted(run, me, signature, now) {
+    return Object.assign({}, run, { phase: "turning", turnFrom: { visit: me.visit, signature, url: me.href }, since: now });
+  }
+  function pageTurned(run, href, now) {
+    return Object.assign({}, run, { phase: "row", page: run.page + 1, listUrl: href, turnFrom: null, since: now });
+  }
+  function resumed(run, now) {
+    return Object.assign({}, run, { since: now });
+  }
+  function timedOut(run, rec, now, task) {
+    let limit = Infinity;
+    if (task.type === "step") limit = (rec.timeout || 30) * 1e3;
+    else if (task.type === "pick-row") limit = LIST_WAIT_MS;
+    else if (task.type === "await-page") limit = PAGE_WAIT_MS;
+    return now - run.since > limit;
+  }
+  function failNote(task, rec) {
+    const target = task.step && task.step.target;
+    const words = target ? target.text || target.words || target.tag : task.step.kind;
+    return `step ${task.index + 1}: "${words}" not found in ${rec.timeout || 30} s`;
+  }
+  function listKey(href) {
+    const url = new URL(String(href));
+    return url.origin + url.pathname.replace(/\/+$/, "") + url.search;
+  }
+  function sameList(a, b) {
+    try {
+      return listKey(a) === listKey(b);
+    } catch {
+      return false;
+    }
+  }
+  function stopRun(live, note) {
+    const closing = (live.closing || []).slice();
+    for (const token of live.run && live.run.opened || []) if (closing.indexOf(token) < 0) closing.push(token);
+    return { mode: "idle", closing, note: note || "" };
+  }
+
+  // src/lib/recorder/targets.js
+  var owns3 = (object, key) => !!object && Object.prototype.hasOwnProperty.call(object, key);
+  function describeStepTarget(node, kind) {
+    const record = describeTarget(node, kind);
+    const label = labelOf(node);
+    let link = null;
+    try {
+      link = typeof node.closest === "function" ? node.closest("a[href]") : null;
+    } catch {
+      link = null;
+    }
+    return Object.assign(record, {
+      words: buttonWords(label),
+      text: label.slice(0, 60),
+      href: link ? String(link.href || "") : "",
+      blank: !!link && String(link.getAttribute("target") || "").toLowerCase() === "_blank"
+    });
+  }
+  function refineWords(target, matches) {
+    if (!target || !target.words) return target;
+    const same = (matches || []).filter((node) => buttonWords(labelOf(node)) === target.words).length;
+    return same < Math.max(2, Math.ceil((matches || []).length / 2)) ? Object.assign({}, target, { words: "" }) : target;
+  }
+  function sameWords(node, target) {
+    return !target.words || buttonWords(labelOf(node)) === target.words;
+  }
+  function matchesOf(doc, target, isOurs) {
+    return Array.from(doc.getElementsByTagName(target.tag)).filter((node) => !isOurs(node) && matchesTarget(node, target) && sameWords(node, target));
+  }
+  function firstOtherLink(row3, control2) {
+    try {
+      for (const link of row3.querySelectorAll("a[href]")) {
+        if (link !== control2 && !link.contains(control2) && !/^javascript:/i.test(link.href)) return link;
+      }
+    } catch {
+    }
+    return null;
+  }
+  function rowsFor(doc, target, isOurs = () => false) {
+    if (!doc || !target || !target.tag) return [];
+    const controls = matchesOf(doc, target, isOurs);
+    const raw = controls.map((control2) => {
+      let node = control2;
+      for (let step = 0; step < ROW_DEPTH; step++) {
+        const up = node.parentElement;
+        if (!up || up === doc.body || up === doc.documentElement) break;
+        if (controls.filter((each) => up.contains(each)).length > 1) break;
+        node = up;
+      }
+      const own2 = collapse(control2.textContent || "");
+      let title = collapse(rowText(node));
+      if (own2) title = collapse(title.replace(own2, " "));
+      title = title.slice(0, 200) || "(no title)";
+      const link = firstOtherLink(node, control2);
+      let href = "";
+      try {
+        href = link ? shortUrl(link.href, doc.location ? doc.location.href : "") : "";
+      } catch {
+        href = "";
+      }
+      return { node, control: control2, title, id: normaliseText(title) + (href ? " | " + href : "") };
+    });
+    const ids = numberIdentities(raw.map((each) => ({ id: each.id })));
+    return raw.map((each, at) => Object.assign(each, { id: ids[at].id }));
+  }
+  function rowOf(rows, node) {
+    if (!node) return null;
+    return (rows || []).find((row3) => row3.node === node || row3.node.contains(node)) || null;
+  }
+  function findInRow(rowNode, target) {
+    if (!rowNode || !target) return null;
+    const inside = [rowNode].concat(Array.from(rowNode.getElementsByTagName(target.tag)));
+    return inside.find((node) => String(node.tagName || "").toLowerCase() === target.tag && matchesTarget(node, target) && sameWords(node, target)) || null;
+  }
+  function findOnPage(doc, target, { isOurs = () => false, onScreen: onScreen3 = () => true } = {}) {
+    if (!doc || !target || !target.tag) return null;
+    const all = Array.from(doc.getElementsByTagName(target.tag)).filter((node) => {
+      try {
+        return !isOurs(node) && onScreen3(node);
+      } catch {
+        return false;
+      }
+    });
+    if (target.words) {
+      let best = null;
+      let bestScore = -1;
+      for (const node of all) {
+        if (buttonWords(labelOf(node)) !== target.words) continue;
+        const score = chainScore(node, target.chain || []);
+        if (score > bestScore) {
+          best = node;
+          bestScore = score;
+        }
+      }
+      return best;
+    }
+    return all.find((node) => matchesTarget(node, target)) || null;
+  }
+  function parseWords(text) {
+    return String(text == null ? "" : text).split(/[,\r\n]+/).map((word) => word.trim().toLowerCase()).filter(Boolean);
+  }
+  function rowFilter(title, skipText, onlyText) {
+    const text = normaliseText(title);
+    const hit = parseWords(skipText).find((word) => text.indexOf(word) >= 0);
+    if (hit) return { take: false, why: `skipped: has "${hit}"` };
+    const only = parseWords(onlyText);
+    if (only.length && !only.some((word) => text.indexOf(word) >= 0)) {
+      return { take: false, why: "skipped: lacks any of " + only.map((word) => `"${word}"`).join(", ") };
+    }
+    return { take: true, why: "" };
+  }
+  function wantedRows(rows, ledger, rec) {
+    const held = ledger && ledger.rows;
+    const settings = rec || {};
+    return (rows || []).filter((row3) => !owns3(held, row3.id) && rowFilter(row3.title, settings.skipText, settings.onlyText).take);
+  }
+
+  // src/lib/recorder/highlight.js
+  var MARK2 = "pz-rec-mark";
+  var SKIP = "pz-rec-skip";
+  var STYLE_ID = "pz-rec-highlight-style";
+  var MOST = 2e3;
+  function findWordRanges(text, words) {
+    const lower = String(text == null ? "" : text).toLowerCase();
+    const list = (words || []).map((word) => String(word).toLowerCase()).filter(Boolean);
+    const out = [];
+    let at = 0;
+    while (at < lower.length) {
+      let best = -1;
+      let length = 0;
+      for (const word of list) {
+        const found = lower.indexOf(word, at);
+        if (found >= 0 && (best < 0 || found < best || found === best && word.length > length)) {
+          best = found;
+          length = word.length;
+        }
+      }
+      if (best < 0) break;
+      out.push([best, best + length]);
+      at = best + length;
+    }
+    return out;
+  }
+  function registry(doc) {
+    const win = doc && doc.defaultView;
+    const api = win && win.CSS && win.CSS.highlights;
+    return api && typeof win.Highlight === "function" ? { api, Make: win.Highlight, win } : null;
+  }
+  function addStyle(doc) {
+    if (doc.getElementById(STYLE_ID)) return;
+    const style = doc.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = `::highlight(${MARK2}){background:#ffeb3b;color:#000}::highlight(${SKIP}){background:#ffcdd2;color:#000}`;
+    (doc.head || doc.documentElement).appendChild(style);
+  }
+  function highlightWords(doc, name, words, isOurs = () => false) {
+    const found = registry(doc);
+    if (!found) return 0;
+    const list = (words || []).filter(Boolean);
+    if (!list.length || !doc.body) {
+      found.api.delete(name);
+      return 0;
+    }
+    addStyle(doc);
+    const filter = found.win.NodeFilter;
+    const walker = doc.createTreeWalker(doc.body, filter.SHOW_TEXT, {
+      acceptNode(node) {
+        const parent = node.parentElement;
+        if (!parent || /^(SCRIPT|STYLE|NOSCRIPT|TEXTAREA)$/.test(parent.nodeName) || isOurs(parent)) return filter.FILTER_REJECT;
+        return filter.FILTER_ACCEPT;
+      }
+    });
+    const ranges = [];
+    for (let node = walker.nextNode(); node && ranges.length < MOST; node = walker.nextNode()) {
+      for (const [start, end] of findWordRanges(node.nodeValue, list)) {
+        const range = doc.createRange();
+        range.setStart(node, start);
+        range.setEnd(node, end);
+        ranges.push(range);
+        if (ranges.length >= MOST) break;
+      }
+    }
+    found.api.set(name, new found.Make(...ranges));
+    return ranges.length;
+  }
+  function clearHighlights(doc) {
+    const found = registry(doc);
+    if (!found) return;
+    found.api.delete(MARK2);
+    found.api.delete(SKIP);
+  }
+
+  // src/lib/recorder/panel.js
+  var RESET2 = "text-transform:none;letter-spacing:normal;line-height:1.3;margin:0;width:auto;height:auto;box-shadow:none;text-shadow:none;float:none;text-align:center;vertical-align:middle;";
+  function button2(t, act, label, handler, title) {
+    const b = tag("button", { textContent: label, type: "button" });
+    b.setAttribute("data-act", act);
+    if (title) b.title = title;
+    b.style.cssText = `border:1px solid ${t.border};background:${t.head};color:${t.fg};border-radius:5px;` + RESET2 + "padding:3px 8px;cursor:pointer;font:12px sans-serif;box-sizing:border-box;" + (getTouch() ? "min-height:40px;" : "");
+    if (handler) b.addEventListener("click", handler);
+    return b;
+  }
+  function row2(gap = 6) {
+    const r = tag("div");
+    r.style.cssText = `display:flex;flex-wrap:wrap;gap:${gap}px;align-items:center;`;
+    return r;
+  }
+  function field(t, act, label, type, width, title, handler) {
+    const wrap = tag("label");
+    wrap.style.cssText = `display:flex;align-items:center;gap:4px;color:${t.sub};`;
+    if (title) wrap.title = title;
+    wrap.appendChild(tag("span", { textContent: label }));
+    const input = tag("input", { type });
+    if (type === "number") input.min = "0";
+    input.setAttribute("data-act", act);
+    input.style.cssText = numberStyle(width, t);
+    if (handler) input.addEventListener("change", () => handler(input.value));
+    wrap.appendChild(input);
+    return { wrap, input };
+  }
+  function createRecorderPanel({
+    position = null,
+    onClose,
+    onRecord,
+    onPlay,
+    onStop,
+    onReset,
+    onExport,
+    onSelectStep,
+    onRemoveStep,
+    onWaitSeconds,
+    onAddWait,
+    onAddCheck,
+    onSkipText,
+    onOnlyText,
+    onHighlight,
+    onPages,
+    onTimeout
+  }) {
+    const t = palette();
+    const panel = own(tag("div", { className: "pz-recorder" }), "recorder");
+    panel.style.cssText = `position:fixed;z-index:2147483647;width:320px;max-width:calc(100vw - 24px);box-sizing:border-box;background:${t.bg};color:${t.fg};border:1px solid ${t.border};border-radius:8px;font:12px sans-serif;box-shadow:${t.shadow};overflow:hidden;text-align:left;` + (position ? `left:${position.left}px;top:${position.top}px;` : "left:12px;bottom:54px;");
+    const head = tag("div");
+    head.setAttribute("data-pz-drag", "");
+    head.style.cssText = `display:flex;align-items:center;gap:8px;padding:8px 12px;background:${t.head};border-bottom:1px solid ${t.border};cursor:move;user-select:none;`;
+    head.appendChild(tag("strong", { textContent: "\u23FA Step recorder", style: `flex:1;color:${t.fg};` }));
+    const cls = tag("button", { textContent: "\u2715", type: "button", title: "Close" });
+    cls.setAttribute("data-act", "rec-close");
+    cls.style.cssText = RESET2 + `border:0;background:none;color:${t.fg};font-size:15px;line-height:1;cursor:pointer;padding:0 2px;`;
+    if (onClose) cls.addEventListener("click", onClose);
+    head.appendChild(cls);
+    panel.appendChild(head);
+    const body = tag("div");
+    body.style.cssText = "display:flex;flex-direction:column;gap:8px;padding:10px 12px;";
+    panel.appendChild(body);
+    const controls = row2();
+    const record = button2(t, "rec-record", "\u23FA Record", onRecord, "Do one item by hand while this watches");
+    controls.appendChild(record);
+    const play = tag("button", { textContent: "\u25B6 Play", type: "button" });
+    play.setAttribute("data-act", "rec-play");
+    play.style.cssText = RESET2 + `border:0;border-radius:12px;padding:4px 14px;cursor:pointer;font:bold 12px sans-serif;color:#fff;background:${t.accent};min-width:76px;` + (getTouch() ? "min-height:40px;" : "");
+    if (onPlay) play.addEventListener("click", onPlay);
+    controls.appendChild(play);
+    controls.appendChild(button2(t, "rec-stop", "\u25A0 Stop", onStop, "Stop the run and close the tabs it opened"));
+    const reset = button2(t, "rec-reset", "\u21BA Reset", onReset, "Forget which items are done on this site");
+    controls.appendChild(reset);
+    body.appendChild(controls);
+    const list = tag("div");
+    list.setAttribute("data-pz-steps", "");
+    list.style.cssText = `display:flex;flex-direction:column;gap:2px;max-height:180px;overflow:auto;border:1px solid ${t.border};border-radius:5px;padding:4px;background:${t.field};`;
+    list.appendChild(tag("div", { textContent: "No steps yet. Press Record, then do one item by hand.", style: `color:${t.sub};padding:2px;` }));
+    list.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!target || typeof target.closest !== "function") return;
+      const remove = target.closest('[data-act="rec-remove"]');
+      if (remove) {
+        if (onRemoveStep) onRemoveStep(Number(remove.getAttribute("data-index")));
+        return;
+      }
+      if (target.closest("input")) return;
+      const line = target.closest('[data-act="rec-step"]');
+      if (line && onSelectStep) onSelectStep(Number(line.getAttribute("data-index")));
+    });
+    list.addEventListener("change", (event) => {
+      const box2 = event.target && event.target.closest ? event.target.closest('[data-act="rec-wait-seconds"]') : null;
+      if (box2 && onWaitSeconds) onWaitSeconds(Number(box2.getAttribute("data-index")), box2.value);
+    });
+    body.appendChild(list);
+    const ops = row2();
+    ops.appendChild(button2(t, "rec-add-wait", "\uFF0B Wait", onAddWait, "Add a wait after the chosen step"));
+    const check = tag("input", { type: "text", placeholder: "page says\u2026" });
+    check.setAttribute("data-act", "rec-check-text");
+    check.style.cssText = numberStyle(110, t);
+    ops.appendChild(check);
+    ops.appendChild(button2(t, "rec-add-check", "\uFF0B Skip if", () => {
+      const words = check.value;
+      if (onAddCheck) onAddCheck(words);
+      check.value = "";
+    }, "Before the chosen step, skip the item if its page says these words"));
+    body.appendChild(ops);
+    const skip2 = field(t, "rec-skip", "Skip items with", "text", 150, "Words, comma between; an item holding any is left out", onSkipText);
+    const only = field(t, "rec-only", "Only items with", "text", 150, "Words, comma between; only items holding one are taken", onOnlyText);
+    const mark = field(t, "rec-highlight", "Highlight", "text", 150, "Words to mark on every page while this is open", onHighlight);
+    for (const each of [skip2, only, mark]) body.appendChild(each.wrap);
+    const numbers = row2(10);
+    const pages = field(t, "rec-pages", "Pages", "number", 52, "Stop after this many list pages; 0 for all", onPages);
+    const timeout = field(t, "rec-timeout", "Step timeout s", "number", 52, "How long a step may wait for its button", onTimeout);
+    numbers.appendChild(pages.wrap);
+    numbers.appendChild(timeout.wrap);
+    body.appendChild(numbers);
+    const strip = tag("div");
+    strip.style.cssText = `padding:7px 12px;border-top:1px solid ${t.border};background:${t.head};display:flex;flex-direction:column;gap:3px;`;
+    const counts = tag("div", { style: `color:${t.fg};font:11px sans-serif;min-height:14px;` });
+    const status = tag("div", { textContent: "Ready.", style: `color:${t.sub};font:11px sans-serif;min-height:14px;` });
+    const foot = row2();
+    const exporter = button2(t, "rec-export", "Export", onExport, "Save the steps and the ledger as JSON");
+    exporter.style.padding = "1px 6px";
+    const more = tag("button", { textContent: "Details \u25B8", type: "button" });
+    more.setAttribute("data-act", "rec-details");
+    more.style.cssText = RESET2 + `display:none;border:0;background:none;padding:0;cursor:pointer;color:${t.sub};font:11px sans-serif;text-decoration:underline;`;
+    foot.appendChild(exporter);
+    foot.appendChild(more);
+    const box = tag("pre");
+    box.style.cssText = `display:none;margin:2px 0 0;max-height:160px;overflow:auto;padding:5px 6px;white-space:pre-wrap;background:${t.field};color:${t.fg};border:1px solid ${t.border};border-radius:4px;font:10.5px/1.4 ui-monospace,Consolas,monospace;`;
+    more.addEventListener("click", () => {
+      const open = box.style.display === "none";
+      box.style.display = open ? "block" : "none";
+      more.textContent = open ? "Details \u25BE" : "Details \u25B8";
+    });
+    strip.appendChild(counts);
+    strip.appendChild(status);
+    strip.appendChild(foot);
+    strip.appendChild(box);
+    panel.appendChild(strip);
+    return {
+      el: panel,
+      head,
+      setMode(mode) {
+        record.textContent = mode === "recording" ? "\u25A0 Stop recording" : "\u23FA Record";
+        play.textContent = mode === "running" ? "\u23F8 Pause" : mode === "paused" ? "\u25B6 Resume" : "\u25B6 Play";
+      },
+      setSteps(lines, kinds, waits, selected) {
+        list.textContent = "";
+        if (!lines.length) {
+          list.appendChild(tag("div", { textContent: "No steps yet. Press Record, then do one item by hand.", style: `color:${t.sub};padding:2px;` }));
+          return;
+        }
+        lines.forEach((text, index) => {
+          const line = tag("div");
+          line.setAttribute("data-act", "rec-step");
+          line.setAttribute("data-index", String(index));
+          line.setAttribute("aria-selected", index === selected ? "true" : "false");
+          line.style.cssText = "display:flex;align-items:center;gap:4px;padding:2px 4px;border-radius:3px;cursor:pointer;" + (index === selected ? `background:${t.hover};outline:1px solid ${t.accent};` : "");
+          line.appendChild(tag("span", { textContent: `${index + 1}. ${text}`, style: "flex:1;min-width:0;overflow-wrap:anywhere;" }));
+          if (kinds[index] === "wait") {
+            const seconds = tag("input", { type: "number", min: "0", value: String(waits[index]) });
+            seconds.setAttribute("data-act", "rec-wait-seconds");
+            seconds.setAttribute("data-index", String(index));
+            seconds.title = "Seconds";
+            seconds.style.cssText = numberStyle(46, t);
+            line.appendChild(seconds);
+          }
+          if (index > 0) {
+            const remove = tag("button", { textContent: "\u2715", type: "button", title: "Remove this step" });
+            remove.setAttribute("data-act", "rec-remove");
+            remove.setAttribute("data-index", String(index));
+            remove.style.cssText = RESET2 + `border:0;background:none;color:${t.sub};cursor:pointer;padding:0 3px;font:11px sans-serif;`;
+            line.appendChild(remove);
+          }
+          list.appendChild(line);
+        });
+      },
+      setFields({ skipText = "", onlyText = "", highlight = "", pages: pageCount = 0, timeout: seconds = 30 } = {}) {
+        skip2.input.value = skipText;
+        only.input.value = onlyText;
+        mark.input.value = highlight;
+        pages.input.value = String(pageCount);
+        timeout.input.value = String(seconds);
+      },
+      setStatus(text) {
+        status.textContent = text || "";
+      },
+      setCounts(text) {
+        counts.textContent = text || "";
+      },
+      setDetails(text, openIt = false) {
+        box.textContent = text || "";
+        more.style.display = text ? "inline-block" : "none";
+        if (!text || openIt) {
+          box.style.display = text && openIt ? "block" : "none";
+          more.textContent = text && openIt ? "Details \u25BE" : "Details \u25B8";
+        }
+      },
+      setReset(label) {
+        reset.textContent = label;
+      }
+    };
+  }
+
+  // src/lib/recorder/tool.js
+  var TAB_KEY = "pz-rec tab";
+  var POSITION_KEY2 = "pz-rec position";
+  var ROW_MARK = "data-pz-rec";
+  var POLL_MS = 300;
+  var LEAVING_MS = 5e3;
+  var UNBOUND_GIVE_UP_MS = 6e4;
+  var NAV_RETRY_MS = 1e4;
+  var NOT_A_LIST = "That isn't one of a list of items. Click the first item's button.";
+  var ACTIONABLE = 'a[href], button, [role="button"], [role="link"], [role="menuitem"], [role="tab"], input, select, label, summary, [onclick], [class*="btn"], [class*="button"], [tabindex]';
+  var ROW_LOOK = {
+    done: ["", "0.45"],
+    skipped: ["2px dashed #c62828", ""],
+    failed: ["2px dashed #e08a00", ""],
+    current: ["3px solid #1e88e5", ""]
+  };
+  function newId() {
+    return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+  }
+  function onScreen2(node) {
+    if (!node) return false;
+    if (typeof node.checkVisibility === "function") {
+      try {
+        return node.checkVisibility() === true;
+      } catch {
+      }
+    }
+    const box = node.getBoundingClientRect();
+    return box.width > 0 && box.height > 0;
+  }
+  function fileStamp2(date) {
+    const two = (number) => (number < 10 ? "0" : "") + number;
+    return date.getFullYear() + two(date.getMonth() + 1) + two(date.getDate()) + "-" + two(date.getHours()) + two(date.getMinutes()) + two(date.getSeconds());
+  }
+  function stepFromClick(node, me, draft, { doc = document, isOurs = () => false, rowNode = null } = {}) {
+    const found = resolveTarget(node);
+    if (!found) return { problem: "Nothing there to record." };
+    const base = { tab: me.token, origin: me.origin, path: me.path, visit: me.visit };
+    const firstClick = !draft.steps.some((step) => step.kind === "click");
+    if (!firstClick && found.kind === "button") {
+      let acts = false;
+      try {
+        acts = !!found.node.closest(ACTIONABLE);
+      } catch {
+        acts = false;
+      }
+      if (!acts) return { ignored: true };
+    }
+    let target = describeStepTarget(found.node, found.kind);
+    if (!target.chain.length) return { problem: "That can't be found again. Click something inside the page." };
+    if (firstClick) {
+      const loose = Object.assign({}, target, { words: "" });
+      target = refineWords(target, rowsFor(doc, loose, isOurs).map((row4) => row4.control));
+      const rows = rowsFor(doc, target, isOurs);
+      const row3 = rowOf(rows, found.node);
+      if (!row3 || rows.length < 2) return { problem: NOT_A_LIST };
+      return { click: Object.assign(base, { target, scope: "row", row: { id: row3.id, title: row3.title } }), rowNode: row3.node };
+    }
+    const inRow = !!rowNode && me.visit === draft.rowVisit && rowNode.contains(found.node);
+    return { click: Object.assign(base, { target, scope: inRow ? "row" : "page" }), rowNode };
+  }
+  function createRecorderTool({ gm: gm2, pageWindow: pageWindow2 = window, version = "0.0.0", win = window, doc = document } = {}) {
+    const store = createRecorderStore(gm2);
+    const isOurs = (node) => {
+      const el = node && node.nodeType === 1 ? node : node && node.parentElement;
+      return !!(el && typeof el.closest === "function" && el.closest("[data-pz]"));
+    };
+    let memToken = null;
+    let visit = newId();
+    let startedAt = Date.now();
+    let holdUntil = 0;
+    let navigatedAt = 0;
+    let closingAsked = false;
+    function readToken() {
+      try {
+        return win.sessionStorage.getItem(TAB_KEY) || memToken;
+      } catch {
+        return memToken;
+      }
+    }
+    function keepToken(token) {
+      memToken = token;
+      try {
+        win.sessionStorage.setItem(TAB_KEY, token);
+      } catch {
+      }
+      return token;
+    }
+    async function adoptable(live) {
+      if (win.history.length <= 1) return null;
+      const leaving = await store.readLeaving();
+      if (!leaving || Date.now() - leaving.at > LEAVING_MS || live.closing.indexOf(leaving.token) >= 0) return null;
+      let from = "";
+      try {
+        from = new URL(doc.referrer).origin;
+      } catch {
+        from = "";
+      }
+      return from && from === leaving.origin ? leaving.token : null;
+    }
+    function me(now = Date.now()) {
+      return {
+        token: readToken(),
+        visit,
+        origin: win.location.origin,
+        href: win.location.href,
+        path: win.location.pathname,
+        startedAt,
+        now,
+        holdUntil
+      };
+    }
+    function hold(ms) {
+      holdUntil = Date.now() + ms;
+    }
+    let opened = false;
+    let view = null;
+    let selected = -1;
+    let localNote = null;
+    let shown = { steps: "", fields: "" };
+    let resetArmed = 0;
+    let liveCache = { mode: "idle", closing: [], note: "" };
+    let recCache = null;
+    let ledgerCache = { rows: {} };
+    function say(text) {
+      localNote = { text, until: Date.now() + 5e3 };
+      if (view) view.setStatus(text);
+    }
+    let timer = null;
+    let ticking = false;
+    let busy = false;
+    let lastChange = Date.now();
+    let quietWatch = null;
+    let highlightAt = 0;
+    let highlightKey = "";
+    function startLoop() {
+      if (timer) return;
+      timer = setInterval(() => {
+        tick();
+      }, POLL_MS);
+      if (!quietWatch && typeof MutationObserver === "function" && doc.body) {
+        try {
+          quietWatch = new MutationObserver((records) => {
+            if (records.some((record2) => !isOurs(record2.target))) lastChange = Date.now();
+          });
+          quietWatch.observe(doc.body, { childList: true, subtree: true, attributes: true, characterData: true });
+        } catch {
+          quietWatch = null;
+        }
+      }
+    }
+    function stopLoop() {
+      clearInterval(timer);
+      timer = null;
+      if (quietWatch) {
+        try {
+          quietWatch.disconnect();
+        } catch {
+        }
+        quietWatch = null;
+      }
+    }
+    function recOriginOf(live) {
+      if (live.run) return live.run.origin;
+      if (live.draft) return live.draft.origin;
+      return win.location.origin;
+    }
+    async function tick() {
+      if (ticking) return;
+      ticking = true;
+      try {
+        const live = await store.readLive();
+        liveCache = live;
+        const token = readToken();
+        if (token && live.closing.indexOf(token) >= 0) {
+          closeSelf();
+          return;
+        }
+        if (live.mode === "recording") listenForClicks();
+        else stopListening();
+        const origin2 = recOriginOf(live);
+        recCache = await store.readRecording(origin2);
+        ledgerCache = await store.readLedger(origin2);
+        const bound = live.run && token && Object.keys(live.run.tabs).some((tab) => live.run.tabs[tab] === token);
+        if (live.mode === "running" && token && !busy) {
+          busy = true;
+          try {
+            await act(live, recCache, ledgerCache);
+          } finally {
+            busy = false;
+          }
+        }
+        if (!opened && (live.mode === "recording" || bound)) open();
+        render(live, recCache, ledgerCache);
+        const unboundTooLong = live.mode === "running" && !bound && Date.now() - startedAt > UNBOUND_GIVE_UP_MS;
+        if (!opened && (live.mode === "idle" || unboundTooLong)) stopLoop();
+      } catch (error) {
+        say("Recorder fault: " + (error && error.message ? error.message : String(error)));
+      } finally {
+        ticking = false;
+      }
+    }
+    async function commit(expected, next) {
+      const current = await store.readLive();
+      if ((current.rev || 0) !== (expected.rev || 0) || current.mode !== expected.mode) return null;
+      const written = Object.assign({}, next, { rev: (expected.rev || 0) + 1 });
+      await store.writeLive(written);
+      liveCache = written;
+      return written;
+    }
+    async function writeFresh(next) {
+      const current = await store.readLive();
+      const written = Object.assign({}, next, { rev: (current.rev || 0) + 1 });
+      await store.writeLive(written);
+      liveCache = written;
+      return written;
+    }
+    function closeSelf() {
+      if (closingAsked) return;
+      closingAsked = true;
+      stopLoop();
+      try {
+        win.close();
+      } catch {
+      }
+      setTimeout(() => say("Close this tab by hand: the browser kept it open."), 1500);
+    }
+    function rowsHere(rec) {
+      return rec && rec.steps[0] ? rowsFor(doc, rec.steps[0].target, isOurs) : [];
+    }
+    async function finish(live, note) {
+      await commit(live, stopRun(live, note));
+      say(note);
+    }
+    async function endRow(live, run2, rec, ledger, status, note) {
+      if (run2.row) {
+        const kept = markRow(ledger, run2.row.id, { status, title: run2.row.title, note, at: (/* @__PURE__ */ new Date()).toISOString(), page: run2.page });
+        await store.writeLedger(rec.origin, kept);
+        ledgerCache = kept;
+      }
+      const ended = rowEnded(run2, Date.now());
+      return commit(live, Object.assign({}, live, { run: ended.run, closing: ended.closing }));
+    }
+    async function moveOn(live, run2, rec, ledger, mine) {
+      const out = advance(run2, rec, mine, Date.now());
+      if (!out.finished) return commit(live, Object.assign({}, live, { run: out.run }));
+      return endRow(live, out.run, rec, ledger, "done", "");
+    }
+    function navigateTo(url) {
+      if (Date.now() - navigatedAt < NAV_RETRY_MS) return;
+      navigatedAt = Date.now();
+      hold(5e3);
+      win.location.href = url;
+    }
+    function locate(step, index, run2, rec) {
+      if (step.scope === "row") {
+        const row3 = rowsHere(rec).find((each) => run2.row && each.id === run2.row.id);
+        if (!row3) return null;
+        return index === 0 ? row3.control : findInRow(row3.node, step.target);
+      }
+      return findOnPage(doc, step.target, { isOurs, onScreen: onScreen2 });
+    }
+    function fire(el) {
+      try {
+        el.scrollIntoView({ block: "center" });
+      } catch {
+      }
+      const View = win.PointerEvent || win.MouseEvent;
+      for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup"]) {
+        try {
+          const Kind = type.startsWith("pointer") ? View : win.MouseEvent;
+          el.dispatchEvent(new Kind(type, { bubbles: true, cancelable: true, view: win, button: 0 }));
+        } catch {
+        }
+      }
+      el.click();
+    }
+    function press(el, step) {
+      if (!step.opens) {
+        fire(el);
+        return;
+      }
+      let link = null;
+      try {
+        link = el.closest("a[href]");
+      } catch {
+        link = null;
+      }
+      if (link && link.href && !/^javascript:/i.test(link.href)) {
+        gm2.openTab(link.href);
+        return;
+      }
+      const original = pageWindow2.open;
+      const stand = function(url) {
+        try {
+          gm2.openTab(new URL(String(url), win.location.href).href);
+        } catch {
+        }
+        return { closed: false, focus() {
+        }, close() {
+        }, location: {} };
+      };
+      try {
+        pageWindow2.open = stand;
+      } catch {
+      }
+      try {
+        fire(el);
+      } finally {
+        setTimeout(() => {
+          try {
+            if (pageWindow2.open === stand) pageWindow2.open = original;
+          } catch {
+          }
+        }, 1e3);
+      }
+    }
+    function pageSays(text) {
+      let all = "";
+      try {
+        all = String(doc.body && (doc.body.innerText || doc.body.textContent) || "");
+      } catch {
+        all = "";
+      }
+      return all.toLowerCase().indexOf(String(text).toLowerCase()) >= 0;
+    }
+    function comeForward() {
+      try {
+        if (doc.hidden) win.focus();
+      } catch {
+      }
+    }
+    async function act(live, rec, ledger) {
+      const run2 = live.run;
+      if (!run2 || !rec) return;
+      const now = Date.now();
+      const mine = me(now);
+      const task = currentTask(run2, rec);
+      const who = whoActs(run2, rec, mine, task);
+      if (!who.mine) return;
+      if (mine.token === run2.home) comeForward();
+      if (task.type === "pick-row") {
+        if (!sameList(win.location.href, run2.listUrl)) {
+          if (now - run2.since > 1500) navigateTo(run2.listUrl);
+          return;
+        }
+        const rows = rowsHere(rec);
+        paintRows(rows, ledger, null);
+        if (!rows.length) {
+          if (timedOut(run2, rec, now, task)) await finish(live, "No items found on the list page. Press Play on the list.");
+          return;
+        }
+        const wanted = wantedRows(rows, ledger, rec);
+        if (!wanted.length) {
+          await commit(live, Object.assign({}, live, { run: startTurning(run2, now) }));
+          return;
+        }
+        await commit(live, Object.assign({}, live, { run: rowPicked(run2, wanted[0], now) }));
+        return;
+      }
+      if (task.type === "unwind") {
+        if (sameList(win.location.href, run2.listUrl)) await commit(live, Object.assign({}, live, { run: listArrived(run2, now) }));
+        else if (now - run2.since > 1500) navigateTo(run2.listUrl);
+        return;
+      }
+      if (task.type === "turn-page") {
+        if (rec.pages > 0 && run2.page >= rec.pages) {
+          await finish(live, `Stopped after ${run2.page} page(s).`);
+          return;
+        }
+        const rows = rowsHere(rec);
+        const last = rows.length ? rows[rows.length - 1].node : null;
+        const found = findNextControls(doc, last, { isOurs, onScreen: onScreen2, win });
+        if (!found.length) {
+          await finish(live, "Last page done.");
+          return;
+        }
+        const signature = rows.map((row3) => row3.id).join("\n");
+        if (!await commit(live, Object.assign({}, live, { run: turnStarted(run2, mine, signature, now) }))) return;
+        hold(1500);
+        fire(found[0].control);
+        return;
+      }
+      if (task.type === "await-page") {
+        const rows = rowsHere(rec);
+        const signature = rows.map((row3) => row3.id).join("\n");
+        if (rows.length && (mine.visit !== run2.turnFrom.visit || signature !== run2.turnFrom.signature)) {
+          await commit(live, Object.assign({}, live, { run: pageTurned(run2, win.location.href, now) }));
+        } else if (timedOut(run2, rec, now, task)) {
+          await finish(live, "The next page didn't load.");
+        }
+        return;
+      }
+      const step = task.step;
+      const ready = who.bind ? bindTab(run2, step.tab, mine.token) : run2;
+      if (who.skip) {
+        await moveOn(live, ready, rec, ledger, mine);
+        return;
+      }
+      if (step.kind === "click") {
+        const el = locate(step, task.index, ready, rec);
+        if (!el) {
+          if (timedOut(ready, rec, now, task)) await endRow(live, ready, rec, ledger, "failed", failNote(task, rec));
+          return;
+        }
+        if (!await moveOn(live, ready, rec, ledger, mine)) return;
+        hold(1500);
+        press(el, step);
+        return;
+      }
+      if (step.kind === "wait") {
+        if (now - ready.since >= step.seconds * 1e3) await moveOn(live, ready, rec, ledger, mine);
+        return;
+      }
+      if (step.kind === "check") {
+        if (pageSays(step.text)) {
+          await endRow(live, ready, rec, ledger, "skipped", `page says "${step.text}"`);
+          return;
+        }
+        const settled = doc.readyState === "complete" && now - lastChange >= 1e3 && now - ready.since >= 1e3;
+        if (settled || timedOut(ready, rec, now, task)) await moveOn(live, ready, rec, ledger, mine);
+        return;
+      }
+      if (step.kind === "back") {
+        if (!await moveOn(live, ready, rec, ledger, mine)) return;
+        hold(5e3);
+        win.history.back();
+        return;
+      }
+      if (step.kind === "close") {
+        if (!await moveOn(live, ready, rec, ledger, mine)) return;
+        setTimeout(closeSelf, 100);
+      }
+    }
+    function paintRows(rows, ledger, currentId) {
+      for (const row3 of rows) {
+        const held = ledger.rows[row3.id];
+        const status = row3.id === currentId ? "current" : held ? held.status : "";
+        if (row3.node.getAttribute(ROW_MARK) === (status || null)) continue;
+        const look = ROW_LOOK[status];
+        row3.node.style.outline = look ? look[0] : "";
+        row3.node.style.opacity = look ? look[1] : "";
+        if (status) {
+          row3.node.setAttribute(ROW_MARK, status);
+          if (held && held.note) row3.node.title = held.status + ": " + held.note;
+        } else {
+          row3.node.removeAttribute(ROW_MARK);
+        }
+      }
+    }
+    function clearRowPaint() {
+      for (const node of doc.querySelectorAll("[" + ROW_MARK + "]")) {
+        node.style.outline = "";
+        node.style.opacity = "";
+        node.removeAttribute(ROW_MARK);
+      }
+    }
+    function refreshHighlights(rec, force = false) {
+      const words = rec ? [rec.highlight || "", rec.skipText || ""] : ["", ""];
+      const key = words.join("\n");
+      if (!force && key === highlightKey && Date.now() - highlightAt < 2e3) return;
+      highlightKey = key;
+      highlightAt = Date.now();
+      try {
+        highlightWords(doc, MARK2, parseWords(words[0]), isOurs);
+        highlightWords(doc, SKIP, parseWords(words[1]), isOurs);
+      } catch {
+      }
+    }
+    function stepsOf(live, rec) {
+      if (live.mode === "recording" && live.draft) return live.draft.steps;
+      return rec ? rec.steps : [];
+    }
+    function statusOf(live, rec) {
+      if (localNote && Date.now() < localNote.until) return localNote.text;
+      if (live.mode === "recording") {
+        const steps = live.draft && live.draft.steps || [];
+        return steps.length ? `Recording: ${steps.length} step(s). Finish the item, then Stop recording.` : "Recording: do one item by hand, starting with its button in the list.";
+      }
+      if (live.mode === "paused") return "Paused.";
+      if (live.mode === "running" && live.run && rec) {
+        const run2 = live.run;
+        const task = currentTask(run2, rec);
+        const item = run2.row ? `"${run2.row.title.slice(0, 40)}" ` : "";
+        if (task.type === "step") return `Page ${run2.page} \xB7 ${item}step ${task.index + 1} of ${rec.steps.length}: ${describeStep(task.step, task.index, rec.steps)}`;
+        if (task.type === "pick-row") return `Page ${run2.page} \xB7 finding the next item\u2026`;
+        if (task.type === "unwind") return `Page ${run2.page} \xB7 back to the list\u2026`;
+        return `Page ${run2.page} done \xB7 turning the page\u2026`;
+      }
+      return live.note || (rec ? "Ready. Play repeats the steps for every item." : "Press Record on the list page, then do one item by hand.");
+    }
+    function render(live, rec, ledger) {
+      if (!view) return;
+      view.setMode(live.mode);
+      const steps = stepsOf(live, rec);
+      const stepsKey = JSON.stringify(steps) + "|" + selected;
+      if (stepsKey !== shown.steps) {
+        shown.steps = stepsKey;
+        if (selected >= steps.length) selected = steps.length - 1;
+        view.setSteps(
+          steps.map((step, index) => describeStep(step, index, steps)),
+          steps.map((step) => step.kind),
+          steps.map((step) => step.kind === "wait" ? step.seconds : null),
+          selected
+        );
+      }
+      if (rec) {
+        const fieldsKey = [rec.id, rec.skipText, rec.onlyText, rec.highlight, rec.pages, rec.timeout].join("|");
+        const typing = doc.activeElement && view.el.contains(doc.activeElement) && doc.activeElement.tagName === "INPUT";
+        if (fieldsKey !== shown.fields && !typing) {
+          shown.fields = fieldsKey;
+          view.setFields(rec);
+        }
+      }
+      const tally = ledgerTally(ledger);
+      const rows = rec && win.location.origin === rec.origin ? rowsHere(rec) : [];
+      const page = live.run ? `Page ${live.run.page} \xB7 ` : "";
+      view.setCounts(rec ? `${page}${rows.length} items here \xB7 ${tally.done} done \xB7 ${tally.skipped} skipped \xB7 ${tally.failed} failed` : "");
+      view.setStatus(statusOf(live, rec));
+      view.setDetails(ledgerLines(ledger).join("\n"));
+      if (rows.length && live.mode !== "recording") paintRows(rows, ledger, live.run && live.run.row ? live.run.row.id : null);
+      refreshHighlights(rec);
+    }
+    let listening = false;
+    let recRowNode = null;
+    function onRecordClick(event) {
+      if (!event || event.isTrusted !== true || isOurs(event.target)) return;
+      try {
+        const live = store.readLiveNow() || liveCache;
+        if (!live || live.mode !== "recording" || !live.draft) return;
+        const out = stepFromClick(event.target, me(), live.draft, { doc, isOurs, rowNode: recRowNode });
+        if (out.ignored) return;
+        if (out.problem) {
+          say(out.problem);
+          return;
+        }
+        if (out.rowNode) recRowNode = out.rowNode;
+        const draft = addClick(live.draft, out.click);
+        const next = Object.assign({}, live, { draft, rev: (live.rev || 0) + 1 });
+        liveCache = next;
+        store.writeLiveNow(next);
+        say("Recorded: " + describeStep(draft.steps[draft.steps.length - 1], draft.steps.length - 1, draft.steps));
+        render(next, recCache, ledgerCache);
+      } catch (error) {
+        say("Couldn't record that click: " + (error && error.message ? error.message : String(error)));
+      }
+    }
+    function listenForClicks() {
+      if (listening) return;
+      listening = true;
+      win.addEventListener("click", onRecordClick, true);
+    }
+    function stopListening() {
+      if (!listening) return;
+      listening = false;
+      win.removeEventListener("click", onRecordClick, true);
+    }
+    async function noteBack() {
+      const live = store.readLiveNow() || await store.readLive();
+      if (live.mode !== "recording" || !live.draft) return;
+      const mine = me();
+      const draft = addBack(live.draft, { tab: mine.token, origin: mine.origin, visit: mine.visit });
+      if (draft === live.draft) return;
+      await writeFresh(Object.assign({}, live, { draft }));
+      say("Recorded: Go back");
+    }
+    function cameBack() {
+      try {
+        const entry = win.performance.getEntriesByType("navigation")[0];
+        return !!entry && entry.type === "back_forward";
+      } catch {
+        return false;
+      }
+    }
+    async function record() {
+      const live = await store.readLive();
+      if (live.mode === "running" || live.mode === "paused") {
+        say("Stop the run first.");
+        return;
+      }
+      if (live.mode === "recording") {
+        await stopRecording(live);
+        return;
+      }
+      const token = readToken() || keepToken(newId());
+      recRowNode = null;
+      clearRowPaint();
+      await writeFresh({
+        mode: "recording",
+        closing: live.closing,
+        note: "",
+        draft: newDraft({ origin: win.location.origin, listUrl: win.location.href, homeTab: token, visit })
+      });
+      listenForClicks();
+      startLoop();
+      selected = -1;
+      say("Recording: do one item by hand, starting with its button in the list.");
+    }
+    async function stopRecording(live) {
+      stopListening();
+      const origin2 = live.draft.origin;
+      const previous = await store.readRecording(origin2);
+      const out = finishRecording(live.draft, previous, { now: Date.now() });
+      if (out.problem) {
+        await writeFresh({ mode: "idle", closing: live.closing, note: out.problem });
+        say(out.problem);
+        return;
+      }
+      await store.writeRecording(origin2, out.recording);
+      if (out.recording.firstRow) {
+        const ledger = markRow(
+          await store.readLedger(origin2),
+          out.recording.firstRow.id,
+          { status: "done", title: out.recording.firstRow.title, note: "done by hand", at: (/* @__PURE__ */ new Date()).toISOString(), page: 1 }
+        );
+        await store.writeLedger(origin2, ledger);
+      }
+      await writeFresh({ mode: "idle", closing: live.closing, note: `Recorded ${out.recording.steps.length} steps. Play repeats them for every item.` });
+      selected = -1;
+    }
+    async function play() {
+      const live = await store.readLive();
+      if (live.mode === "recording") {
+        say("Stop recording first.");
+        return;
+      }
+      if (live.mode === "running") {
+        await writeFresh(Object.assign({}, live, { mode: "paused" }));
+        say("Paused.");
+        return;
+      }
+      if (live.mode === "paused" && live.run) {
+        await writeFresh(Object.assign({}, live, { mode: "running", run: resumed(live.run, Date.now()) }));
+        startLoop();
+        return;
+      }
+      const rec = await store.readRecording(win.location.origin);
+      if (!rec) {
+        say("Record one item first.");
+        return;
+      }
+      const token = readToken() || keepToken(newId());
+      const ledger = forgetFailed(await store.readLedger(rec.origin));
+      await store.writeLedger(rec.origin, ledger);
+      const run2 = startRun(rec, Object.assign(me(), { token }), Date.now());
+      await writeFresh({ mode: "running", run: run2, closing: live.closing, note: "" });
+      startLoop();
+      say("Playing.");
+    }
+    async function stop() {
+      const live = await store.readLive();
+      if (live.mode === "recording") {
+        await stopRecording(live);
+        return;
+      }
+      if (live.mode === "idle") {
+        say("Nothing is running.");
+        return;
+      }
+      await writeFresh(stopRun(live, "Stopped."));
+      say("Stopped.");
+    }
+    async function reset() {
+      const live = await store.readLive();
+      if (live.mode !== "idle") {
+        say("Stop first.");
+        return;
+      }
+      const origin2 = recOriginOf(live);
+      const count = Object.keys((await store.readLedger(origin2)).rows).length;
+      if (!count) {
+        say("The ledger is already empty.");
+        return;
+      }
+      if (Date.now() > resetArmed) {
+        resetArmed = Date.now() + 4e3;
+        if (view) view.setReset("Confirm reset?");
+        say(`Press again to forget ${count} item(s) on this site.`);
+        setTimeout(() => {
+          if (view && Date.now() > resetArmed) view.setReset("\u21BA Reset");
+        }, 4100);
+        return;
+      }
+      resetArmed = 0;
+      if (view) view.setReset("\u21BA Reset");
+      await store.writeLedger(origin2, { rows: {} });
+      ledgerCache = { rows: {} };
+      clearRowPaint();
+      say("Forgot every item; Play starts from the first.");
+    }
+    async function editRecording(change) {
+      const live = await store.readLive();
+      if (live.mode !== "idle") {
+        say(live.mode === "recording" ? "Stop recording first." : "Stop the run first.");
+        return;
+      }
+      const origin2 = recOriginOf(live);
+      const rec = await store.readRecording(origin2);
+      if (!rec) {
+        say("Record one item first.");
+        return;
+      }
+      const next = change(rec);
+      if (next === rec) return;
+      await store.writeRecording(origin2, next);
+      recCache = next;
+      render(live, next, ledgerCache);
+      refreshHighlights(next, true);
+    }
+    function saveExport() {
+      const now = /* @__PURE__ */ new Date();
+      const out = { script: `popup-zapper ${version} step recorder`, at: now.toISOString(), recording: recCache, ledger: ledgerCache, live: liveCache };
+      const link = doc.createElement("a");
+      link.href = URL.createObjectURL(new Blob([JSON.stringify(out, null, 2)], { type: "application/json" }));
+      link.download = `step-recorder-${win.location.hostname || "page"}-${fileStamp2(now)}.json`;
+      link.style.display = "none";
+      (doc.body || doc.documentElement).appendChild(link);
+      link.click();
+      link.remove();
+      const made = link.href;
+      setTimeout(() => {
+        try {
+          URL.revokeObjectURL(made);
+        } catch {
+        }
+      }, 3e4);
+      say("Saved " + link.download);
+    }
+    const run = (work) => () => {
+      Promise.resolve().then(work).catch((error) => say("Recorder fault: " + (error && error.message)));
+    };
+    function readPosition() {
+      try {
+        const held = JSON.parse(win.localStorage.getItem(POSITION_KEY2) || "null");
+        if (held && Number.isFinite(held.left) && Number.isFinite(held.top) && held.left < win.innerWidth - 40 && held.top < win.innerHeight - 30) return held;
+      } catch {
+      }
+      return null;
+    }
+    function build() {
+      view = createRecorderPanel({
+        position: readPosition(),
+        onClose: () => close(),
+        onRecord: run(record),
+        onPlay: run(play),
+        onStop: run(stop),
+        onReset: run(reset),
+        onExport: saveExport,
+        onSelectStep: (index) => {
+          selected = index === selected ? -1 : index;
+          render(liveCache, recCache, ledgerCache);
+        },
+        onRemoveStep: (index) => run(() => editRecording((rec) => removeStep(rec, index)))(),
+        onWaitSeconds: (index, value) => run(() => editRecording((rec) => setWait(rec, index, value)))(),
+        onAddWait: run(() => editRecording((rec) => insertWait(rec, selected >= 0 ? selected : rec.steps.length - 1))),
+        onAddCheck: (text) => run(() => {
+          if (selected <= 0) {
+            say("Choose the step whose page to check, then add the words.");
+            return null;
+          }
+          return editRecording((rec) => insertCheck(rec, selected, text));
+        })(),
+        onSkipText: (value) => run(() => editRecording((rec) => Object.assign({}, rec, { skipText: String(value) })))(),
+        onOnlyText: (value) => run(() => editRecording((rec) => Object.assign({}, rec, { onlyText: String(value) })))(),
+        onHighlight: (value) => run(() => editRecording((rec) => Object.assign({}, rec, { highlight: String(value) })))(),
+        onPages: (value) => run(() => editRecording((rec) => Object.assign({}, rec, { pages: readSetting(value, 0, 0, 1e4, true) })))(),
+        onTimeout: (value) => run(() => editRecording((rec) => Object.assign({}, rec, { timeout: readSetting(value, 30, 5, 600, true) })))()
+      });
+      (doc.body || doc.documentElement).appendChild(view.el);
+      makeDraggable(view.el, view.head, (spot) => {
+        try {
+          win.localStorage.setItem(POSITION_KEY2, JSON.stringify(spot));
+        } catch {
+        }
+      });
+      shown = { steps: "", fields: "" };
+      render(liveCache, recCache, ledgerCache);
+    }
+    function open() {
+      if (opened) return;
+      opened = true;
+      build();
+      startLoop();
+      tick();
+    }
+    function close() {
+      if (!opened) return true;
+      opened = false;
+      if (view) view.el.remove();
+      view = null;
+      if (liveCache.mode === "idle") {
+        clearRowPaint();
+        clearHighlights(doc);
+      }
+      return true;
+    }
+    function repaint2() {
+      if (!opened) return;
+      if (view) view.el.remove();
+      build();
+    }
+    async function resume() {
+      const live = await store.readLive();
+      liveCache = live;
+      let token = readToken();
+      if (token && live.closing.indexOf(token) >= 0) {
+        closeSelf();
+        return true;
+      }
+      if (live.mode === "idle") return false;
+      if (!token) {
+        const adopted = await adoptable(live);
+        if (adopted) token = keepToken(adopted);
+        else if (win.history.length === 1) token = keepToken(newId());
+        else return false;
+      }
+      if (live.mode === "recording") {
+        listenForClicks();
+        if (cameBack()) await noteBack();
+        open();
+      }
+      startLoop();
+      tick();
+      return true;
+    }
+    win.addEventListener("pageshow", (event) => {
+      if (!event || !event.persisted) return;
+      visit = newId();
+      startedAt = Date.now();
+      holdUntil = 0;
+      navigatedAt = 0;
+      if (readToken() && liveCache.mode === "recording") noteBack().catch(() => {
+      });
+      if (readToken() && liveCache.mode !== "idle") startLoop();
+    });
+    win.addEventListener("pagehide", () => {
+      const token = readToken();
+      if (!token || liveCache.mode === "idle") return;
+      try {
+        store.writeLeavingNow({ token, at: Date.now(), origin: win.location.origin });
+      } catch {
+      }
+    });
+    return {
+      open,
+      close,
+      toggle: () => opened ? close() : (open(), true),
+      isOpen: () => opened,
+      repaint: repaint2,
+      resume,
+      dispose() {
+        stopLoop();
+        stopListening();
+      }
+    };
+  }
+
   // src/main.js
   var gm = createGm();
   var hostname = location.hostname.replace(/^www\./, "");
@@ -5540,9 +7162,14 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
   };
   var activityLog = createActivityLog();
   var undo = createUndoStack();
+  var pageWindow = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+  var recorder = createRecorderTool({ gm, pageWindow, version: VERSION });
   var batch = createBatchTool({
     version: VERSION,
-    pageWindow: typeof unsafeWindow !== "undefined" ? unsafeWindow : window
+    pageWindow,
+    onSteps: () => {
+      recorder.open();
+    }
   });
   function domainEntry() {
     return library.domains[hostname] = library.domains[hostname] || { rules: [], restore: {} };
@@ -6006,6 +7633,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
   function repaint() {
     refreshControl();
     batch.repaint();
+    recorder.repaint();
     if (settingsPanel) reopenSettings();
     if (logPanel) renderLogPanel();
   }
@@ -6015,6 +7643,9 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     GM_registerMenuCommand("Revert last block", doRevert);
     GM_registerMenuCommand("Reveal deeper (this page)", doReveal);
     GM_registerMenuCommand("Batch clicker", toggleBatch);
+    GM_registerMenuCommand("Step recorder", () => {
+      recorder.toggle();
+    });
     GM_registerMenuCommand("Settings", toggleSettings);
     GM_registerMenuCommand("Toggle zapper (this site)", toggleSite);
   } catch {
@@ -6032,6 +7663,8 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
         if (batch.resume()) refreshControl();
       } catch {
       }
+      recorder.resume().catch(() => {
+      });
     };
     if (document.body) start();
     else document.addEventListener("DOMContentLoaded", start, { once: true });

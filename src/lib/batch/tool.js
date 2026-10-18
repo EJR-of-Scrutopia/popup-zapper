@@ -75,7 +75,7 @@ function onScreen(node) {
   return box.width > 0 && box.height > 0;
 }
 
-export function createBatchTool({ version = "0.0.0", pageWindow = window } = {}) {
+export function createBatchTool({ version = "0.0.0", pageWindow = window, onSteps = null } = {}) {
   let storage = null;
   try { storage = window.localStorage; } catch { storage = null; }
 
@@ -1225,6 +1225,7 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window } = {})
       onStart: setStart,
       onLimit: setLimit,
       onType: flipType,
+      onSteps,
     });
     (document.body || document.documentElement).appendChild(view.el);
     makeDraggable(view.el, view.head, savePosition);

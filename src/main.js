@@ -14,6 +14,7 @@ import { createUndoStack } from "./lib/undo.js";
 import { revealDeep, hasResidualGating } from "./lib/reveal.js";
 import { parseVersion, updatePlan } from "./lib/updates.js";
 import { createBatchTool } from "./lib/batch/tool.js";
+import { createRecorderTool } from "./lib/recorder/tool.js";
 import {
   createControlMenu, createSettingsPanel, createPickerToolbar,
   createActivityPanel, createFilterPanel, formatStatus,
@@ -37,9 +38,16 @@ const undo = createUndoStack();
 
 // The batch clicker watches the page's own fetch/XHR, so it needs the page's
 // window, not the userscript sandbox's.
+const pageWindow = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+
+// The step recorder keeps its state in the manager's storage, which every
+// tab and site shares: a list and the viewer it opens are on two origins.
+const recorder = createRecorderTool({ gm, pageWindow, version: VERSION });
+
 const batch = createBatchTool({
   version: VERSION,
-  pageWindow: typeof unsafeWindow !== "undefined" ? unsafeWindow : window,
+  pageWindow,
+  onSteps: () => { recorder.open(); },
 });
 
 function domainEntry() {
@@ -456,6 +464,7 @@ function toggleMenu() {
 function repaint() {
   refreshControl();
   batch.repaint();
+  recorder.repaint();
   if (settingsPanel) reopenSettings();
   if (logPanel) renderLogPanel();
 }
@@ -467,6 +476,7 @@ try {
   GM_registerMenuCommand("Revert last block", doRevert);
   GM_registerMenuCommand("Reveal deeper (this page)", doReveal);
   GM_registerMenuCommand("Batch clicker", toggleBatch);
+  GM_registerMenuCommand("Step recorder", () => { recorder.toggle(); });
   GM_registerMenuCommand("Settings", toggleSettings);
   GM_registerMenuCommand("Toggle zapper (this site)", toggleSite);
 } catch { /* not available in all managers */ }
@@ -486,6 +496,8 @@ async function bootAsync() {
     refreshControl();
     // A click run left going carries on after the page reloads or moves on.
     try { if (batch.resume()) refreshControl(); } catch { /* never block the zapper */ }
+    // A recording or run this tab takes part in carries on after a page load.
+    recorder.resume().catch(() => { /* never block the zapper */ });
   };
   if (document.body) start();
   else document.addEventListener("DOMContentLoaded", start, { once: true });
