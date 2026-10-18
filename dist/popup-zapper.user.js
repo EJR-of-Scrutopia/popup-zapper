@@ -115,7 +115,7 @@
       if (env.navigator && env.navigator.clipboard) return env.navigator.clipboard.writeText(text);
     }
     function openTab(url) {
-      if (has("GM_openInTab")) return void env.GM_openInTab(url, { active: true });
+      if (has("GM_openInTab")) return env.GM_openInTab(url, { active: true });
       if (gmNs && typeof gmNs.openInTab === "function") return void gmNs.openInTab(url, false);
       if (typeof env.open === "function") {
         const w = env.open(url, "_blank");
@@ -5558,6 +5558,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
   // src/lib/recorder/store.js
   var LIVE = "pz-rec live";
   var LEAVING = "pz-rec leaving";
+  var BEAT = "pz-rec beat";
   var RECORDING = "pz-rec recording ";
   var LEDGER = "pz-rec ledger ";
   var owns2 = (object, key) => !!object && Object.prototype.hasOwnProperty.call(object, key);
@@ -5599,6 +5600,11 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
         return isObject(value) && typeof value.token === "string" ? value : null;
       },
       writeLeavingNow: (leaving) => gm2.setNow(LEAVING, JSON.stringify(leaving)),
+      readBeat: async () => {
+        const value = await read(BEAT);
+        return isObject(value) && typeof value.token === "string" && Number.isFinite(value.at) ? value : null;
+      },
+      writeBeatNow: (beat) => gm2.setNow(BEAT, JSON.stringify(beat)),
       readRecording: async (origin2) => {
         const value = await read(RECORDING + origin2);
         return isObject(value) && Array.isArray(value.steps) ? value : null;
@@ -5767,6 +5773,10 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
   var LIST_WAIT_MS = 15e3;
   var PAGE_WAIT_MS = 2e4;
   var FRESH_SLACK_MS = 1e3;
+  var LEAVING_MS = 5e3;
+  var BEAT_STALE_MS = 15e4;
+  var FAIL_STREAK_LIMIT = 3;
+  var NAVIGATION_LIMIT = 3;
   var no = { mine: false, bind: false, skip: false };
   function startRun(rec, me, now) {
     return {
@@ -5816,7 +5826,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     return home ? { mine: true, bind: false, skip: true } : no;
   }
   function rowPicked(run, row3, now) {
-    return Object.assign({}, run, { phase: "steps", at: 0, row: { id: row3.id, title: row3.title }, since: now });
+    return Object.assign({}, run, { phase: "steps", at: 0, row: { id: row3.id, title: row3.title }, since: now, navigations: 0 });
   }
   function bindTab(run, recTab, token) {
     const opened = token !== run.home && run.opened.indexOf(token) < 0 ? run.opened.concat([token]) : run.opened;
@@ -5836,7 +5846,8 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     }
     return { run: next, finished: next.at >= rec.steps.length };
   }
-  function rowEnded(run, now) {
+  function rowEnded(run, now, status = "done") {
+    const streak = run.failStreak || 0;
     return {
       closing: run.opened.slice(),
       run: Object.assign({}, run, {
@@ -5846,12 +5857,19 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
         tabs: { [run.homeTab]: run.home },
         opened: [],
         visits: {},
-        since: now
+        since: now,
+        failStreak: status === "failed" ? streak + 1 : status === "done" ? 0 : streak
       })
     };
   }
+  function tooManyFailures(run) {
+    return (run.failStreak || 0) >= FAIL_STREAK_LIMIT;
+  }
+  function navigated(run, now) {
+    return Object.assign({}, run, { navigations: (run.navigations || 0) + 1, since: now });
+  }
   function listArrived(run, now) {
-    return Object.assign({}, run, { phase: "row", since: now, turnFrom: null });
+    return Object.assign({}, run, { phase: "row", since: now, turnFrom: null, navigations: 0 });
   }
   function startTurning(run, now) {
     return Object.assign({}, run, { phase: "turning", turnFrom: null, since: now });
@@ -5882,10 +5900,11 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     if (!target) return `step ${task.index + 1}: ${task.step.kind} did not finish in ${rec.timeout || 30} s`;
     return `step ${task.index + 1}: "${target.text || target.words || target.tag}" not found in ${rec.timeout || 30} s`;
   }
-  function tokenPlan(live, { token, cloned, adopted, historyLength, startedAt, now }) {
+  function tokenPlan(live, { token, cloned, adopted, historyLength, startedAt, now, beatFresh: alive }) {
     if (token && !cloned) return "keep";
     if (adopted) return "adopt";
     if (live.mode === "running" && live.run) {
+      if (alive === false) return "none";
       if (historyLength === 1 || startedAt >= live.run.since - FRESH_SLACK_MS) return "new";
       return "none";
     }
@@ -5898,6 +5917,14 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
   function listKey(href) {
     const url = new URL(String(href));
     return url.origin + url.pathname.replace(/\/+$/, "") + url.search;
+  }
+  function adoptToken(leaving, { origin: origin2, referrerOrigin, historyLength, now, closing }) {
+    if (!leaving || historyLength <= 1 || now - leaving.at > LEAVING_MS) return null;
+    if ((closing || []).indexOf(leaving.token) >= 0 || origin2 === leaving.origin) return null;
+    return referrerOrigin && referrerOrigin === leaving.origin ? leaving.token : null;
+  }
+  function beatFresh(beat, now) {
+    return !!beat && now - beat.at <= BEAT_STALE_MS;
   }
   function sameList(a, b) {
     try {
@@ -6341,7 +6368,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
   var POSITION_KEY2 = "pz-rec position";
   var ROW_MARK = "data-pz-rec";
   var POLL_MS = 300;
-  var LEAVING_MS = 5e3;
+  var BEAT_EVERY_MS = 3e3;
   var UNBOUND_GIVE_UP_MS = 6e4;
   var NAV_RETRY_MS = 1e4;
   var NOT_A_LIST = "That isn't one of a list of items. Click the first item's button.";
@@ -6369,6 +6396,37 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
   function fileStamp2(date) {
     const two = (number) => (number < 10 ? "0" : "") + number;
     return date.getFullYear() + two(date.getMonth() + 1) + two(date.getDate()) + "-" + two(date.getHours()) + two(date.getMinutes()) + two(date.getSeconds());
+  }
+  function realHref(link, pageHref) {
+    if (!link || typeof link.getAttribute !== "function") return "";
+    const raw = String(link.getAttribute("href") || "").trim();
+    if (!raw || raw.charAt(0) === "#" || /^javascript:/i.test(raw)) return "";
+    const href = String(link.href || "");
+    const bare = (url) => String(url).split("#")[0];
+    return href && bare(href) !== bare(pageHref) ? href : "";
+  }
+  function openStand(openTab, base) {
+    return function(url) {
+      const go = (where) => {
+        const text = String(where == null ? "" : where).trim();
+        if (!text || /^about:blank$/i.test(text)) return;
+        try {
+          openTab(new URL(text, base).href);
+        } catch {
+        }
+      };
+      go(url);
+      const location2 = { assign: go, replace: go, toString: () => "" };
+      Object.defineProperty(location2, "href", { get: () => "", set: go });
+      const stub = { closed: false, focus() {
+      }, close() {
+      }, document: { open() {
+      }, write() {
+      }, close() {
+      } } };
+      Object.defineProperty(stub, "location", { get: () => location2, set: go });
+      return stub;
+    };
   }
   function stepFromClick(node, me, draft, { doc = document, isOurs = () => false, rowNode = null } = {}) {
     const found = resolveTarget(node);
@@ -6425,16 +6483,19 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       return token;
     }
     async function adoptable(live) {
-      if (win.history.length <= 1) return null;
-      const leaving = await store.readLeaving();
-      if (!leaving || Date.now() - leaving.at > LEAVING_MS || live.closing.indexOf(leaving.token) >= 0) return null;
       let from = "";
       try {
         from = new URL(doc.referrer).origin;
       } catch {
         from = "";
       }
-      return from && from === leaving.origin ? leaving.token : null;
+      return adoptToken(await store.readLeaving(), {
+        origin: win.location.origin,
+        referrerOrigin: from,
+        historyLength: win.history.length,
+        now: Date.now(),
+        closing: live.closing
+      });
     }
     function me(now = Date.now()) {
       return {
@@ -6471,6 +6532,26 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     let quietWatch = null;
     let highlightAt = 0;
     let highlightKey = "";
+    let lastBeat = 0;
+    function beat(token) {
+      lastBeat = Date.now();
+      try {
+        store.writeBeatNow({ token, at: lastBeat });
+      } catch {
+      }
+    }
+    const handles = [];
+    function keepHandle(handle) {
+      if (handle && typeof handle.close === "function") handles.push(handle);
+    }
+    function closeHandles() {
+      for (const handle of handles.splice(0)) {
+        try {
+          if (!handle.closed) handle.close();
+        } catch {
+        }
+      }
+    }
     function startLoop() {
       if (timer) return;
       timer = setInterval(() => {
@@ -6520,6 +6601,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
         recCache = await store.readRecording(origin2);
         ledgerCache = await store.readLedger(origin2);
         const bound = live.run && token && Object.keys(live.run.tabs).some((tab) => live.run.tabs[tab] === token);
+        if (live.mode === "running" && token && live.run.home === token && Date.now() - lastBeat >= BEAT_EVERY_MS) beat(token);
         if (live.mode === "running" && token && !busy) {
           busy = true;
           try {
@@ -6567,6 +6649,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       return rec && rec.steps[0] ? rowsFor(doc, rec.steps[0].target, isOurs) : [];
     }
     async function finish(live, note) {
+      closeHandles();
       await commit(live, stopRun(live, note));
       say(note);
     }
@@ -6576,19 +6659,32 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
         await store.writeLedger(rec.origin, kept);
         ledgerCache = kept;
       }
-      const ended = rowEnded(run2, Date.now());
-      return commit(live, Object.assign({}, live, { run: ended.run, closing: ended.closing }));
+      const ended = rowEnded(run2, Date.now(), status);
+      const next = Object.assign({}, live, { run: ended.run, closing: ended.closing });
+      closeHandles();
+      if (status === "failed" && tooManyFailures(ended.run)) {
+        const words = `Stopped: ${FAIL_STREAK_LIMIT} items failed in a row. Last: ${note}`;
+        const written = await commit(live, stopRun(next, words));
+        say(words);
+        return written;
+      }
+      return commit(live, next);
     }
     async function moveOn(live, run2, rec, ledger, mine) {
       const out = advance(run2, rec, mine, Date.now());
       if (!out.finished) return commit(live, Object.assign({}, live, { run: out.run }));
       return endRow(live, out.run, rec, ledger, "done", "");
     }
-    function navigateTo(url) {
+    async function goToList(live, run2) {
       if (Date.now() - navigatedAt < NAV_RETRY_MS) return;
+      if ((run2.navigations || 0) >= NAVIGATION_LIMIT) {
+        await finish(live, "The list page didn't come back at " + run2.listUrl);
+        return;
+      }
+      if (!await commit(live, Object.assign({}, live, { run: navigated(run2, Date.now()) }))) return;
       navigatedAt = Date.now();
       hold(5e3);
-      win.location.href = url;
+      win.location.href = run2.listUrl;
     }
     function locate(step, index, run2, rec) {
       if (step.scope === "row") {
@@ -6624,20 +6720,13 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       } catch {
         link = null;
       }
-      if (link && link.href && !/^javascript:/i.test(link.href)) {
-        gm2.openTab(link.href);
+      const href = realHref(link, win.location.href);
+      if (href) {
+        keepHandle(gm2.openTab(href));
         return;
       }
       const original = pageWindow2.open;
-      const stand = function(url) {
-        try {
-          gm2.openTab(new URL(String(url), win.location.href).href);
-        } catch {
-        }
-        return { closed: false, focus() {
-        }, close() {
-        }, location: {} };
-      };
+      const stand = openStand((url) => keepHandle(gm2.openTab(url)), win.location.href);
       try {
         pageWindow2.open = stand;
       } catch {
@@ -6665,6 +6754,10 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       const now = Date.now();
       const mine = me(now);
       const task = currentTask(run2, rec);
+      if (mine.token !== run2.home && !beatFresh(await store.readBeat(), now)) {
+        say("The run's tab has gone quiet. Press Stop if it was closed.");
+        return;
+      }
       const who = whoActs(run2, rec, mine, task);
       if (!who.mine) {
         if (mine.token === run2.home && overdue(run2, rec, now, task)) await endRow(live, run2, rec, ledger, "failed", failNote(task, rec));
@@ -6672,8 +6765,9 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       }
       if (mine.token === run2.home) comeForward();
       if (task.type === "pick-row") {
+        closeHandles();
         if (!sameList(win.location.href, run2.listUrl)) {
-          if (now - run2.since > 1500) navigateTo(run2.listUrl);
+          if (now - run2.since > 1500) await goToList(live, run2);
           return;
         }
         const rows = rowsHere(rec);
@@ -6691,8 +6785,9 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
         return;
       }
       if (task.type === "unwind") {
+        closeHandles();
         if (sameList(win.location.href, run2.listUrl)) await commit(live, Object.assign({}, live, { run: listArrived(run2, now) }));
-        else if (now - run2.since > 1500) navigateTo(run2.listUrl);
+        else if (now - run2.since > 1500) await goToList(live, run2);
         return;
       }
       if (task.type === "turn-page") {
@@ -6755,6 +6850,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       }
       if (step.kind === "back") {
         if (!await moveOn(live, ready, rec, ledger, mine)) return;
+        closeHandles();
         hold(5e3);
         win.history.back();
         return;
@@ -6965,6 +7061,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       }
       if (live.mode === "paused" && live.run) {
         await writeFresh(Object.assign({}, live, { mode: "running", run: resumed(live.run, Date.now()) }));
+        if (live.run.home === readToken()) beat(live.run.home);
         startLoop();
         return;
       }
@@ -6978,6 +7075,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       await store.writeLedger(rec.origin, ledger);
       const run2 = startRun(rec, Object.assign(me(), { token }), Date.now());
       await writeFresh({ mode: "running", run: run2, closing: live.closing, note: "" });
+      beat(token);
       startLoop();
       say("Playing.");
     }
@@ -6991,6 +7089,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
         say("Nothing is running.");
         return;
       }
+      closeHandles();
       await writeFresh(stopRun(live, "Stopped."));
       say("Stopped.");
     }
@@ -7149,17 +7248,26 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
         opener = true;
       }
       const cloned = !!token && win.history.length === 1 && opener && navType() === "navigate";
+      const adopted = !token || cloned ? await adoptable(live) : null;
+      const alive = beatFresh(await store.readBeat(), Date.now());
       const plan = tokenPlan(live, {
         token,
         cloned,
-        adopted: !token || cloned ? await adoptable(live) : null,
+        adopted,
         historyLength: win.history.length,
         startedAt,
-        now: Date.now()
+        now: Date.now(),
+        beatFresh: alive
       });
       if (plan === "none") return false;
-      if (plan === "adopt") keepToken((await store.readLeaving()).token);
+      if (plan === "adopt") keepToken(adopted);
       if (plan === "new") keepToken(newId());
+      const leaving = await store.readLeaving();
+      if (leaving && leaving.token === readToken()) store.writeLeavingNow(null);
+      if (live.mode === "running" && live.run && live.run.home === readToken() && !alive) {
+        await writeFresh(Object.assign({}, live, { mode: "paused", note: "" }));
+        say("Paused: this tab was away from the run. Press Resume to carry on.");
+      }
       if (live.mode === "recording") {
         listenForClicks();
         if (cameBack()) await noteBack();

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { createRecorderTool, stepFromClick } from "../src/lib/recorder/tool.js";
+import { createRecorderTool, stepFromClick, realHref, openStand } from "../src/lib/recorder/tool.js";
 import { newDraft, addClick } from "../src/lib/recorder/steps.js";
 
 const isOurs = (node) => !!(node && node.closest && node.closest("[data-pz]"));
@@ -71,7 +71,43 @@ describe("building a step from a click", () => {
   });
 });
 
+describe("opening a tab from a replayed click", () => {
+  it("opens a link's address only when it is a real one", () => {
+    document.body.innerHTML = `<a id="real" href="https://viewer.example/doc/1">x</a><a id="hash" href="#">x</a>
+      <a id="same" href="${location.href.split("#")[0]}#top">x</a><a id="js" href="javascript:void(0)">x</a>`;
+    expect(realHref(document.getElementById("real"), location.href)).toBe("https://viewer.example/doc/1");
+    expect(realHref(document.getElementById("hash"), location.href)).toBe("");
+    expect(realHref(document.getElementById("same"), location.href)).toBe("");
+    expect(realHref(document.getElementById("js"), location.href)).toBe("");
+  });
+
+  it("catches window.open, never opening a blank page, and follows the address set on it later", () => {
+    const opened = [];
+    const stand = openStand((url) => { opened.push(url); }, "https://www.cibse.org/item/1");
+    stand("/viewer/1");
+    const blank = stand("");
+    stand("about:blank");
+    expect(opened).toEqual(["https://www.cibse.org/viewer/1"]);
+    blank.location.href = "https://viewer.example/doc/2";
+    blank.location = "https://viewer.example/doc/3";
+    blank.location.replace("https://viewer.example/doc/4");
+    expect(opened.slice(1)).toEqual(["https://viewer.example/doc/2", "https://viewer.example/doc/3", "https://viewer.example/doc/4"]);
+  });
+});
+
 describe("the recorder tool", () => {
+  it("lets go of a leaving note naming its own token once it lands", async () => {
+    const gm = fakeGm();
+    gm.values["pz-rec live"] = JSON.stringify({ mode: "recording", closing: [], note: "", draft: newDraft({ origin: "http://localhost:3000", listUrl: "/", homeTab: "h", visit: "v0" }) });
+    gm.values["pz-rec leaving"] = JSON.stringify({ token: "h", at: Date.now(), origin: "http://localhost:3000" });
+    sessionStorage.setItem("pz-rec tab", "h");
+    const tool = createRecorderTool({ gm, version: "test" });
+    await tool.resume();
+    expect(JSON.parse(gm.values["pz-rec leaving"] || "null")).toBeNull();
+    tool.close();
+    tool.dispose();
+  });
+
   it("opens its panel on the page", () => {
     const tool = createRecorderTool({ gm: fakeGm(), version: "test" });
     tool.open();

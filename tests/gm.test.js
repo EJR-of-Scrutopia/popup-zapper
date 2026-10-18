@@ -55,6 +55,12 @@ describe("createGm", () => {
     expect(open).toHaveBeenCalledWith("u", "_blank");
   });
 
+  it("hands back the manager's tab handle, so a tab it opened can be closed", () => {
+    const handle = { close: vi.fn(), closed: false };
+    const gm = createGm({ GM_openInTab: () => handle });
+    expect(gm.openTab("https://v/doc")).toBe(handle);
+  });
+
   it("writes at once with GM_setValue when it exists, for a click that leaves the page", () => {
     const store = {};
     const asyncSet = vi.fn(async () => {});

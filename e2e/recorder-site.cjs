@@ -3,7 +3,8 @@
 // items on http://127.0.0.1:PORT, the viewer on http://localhost:PORT.
 //   /list?page=1|2  three cards a page, each with "Access Now"; Next Page on page 1
 //   /item/N         "Read online" opens the viewer in a new tab; item 5 is "Buy now" only
-//   /viewer/N       draws a toolbar after 800 ms with an icon-only Download button
+//   /viewer/N       draws a toolbar after 800 ms with an icon-only Download button;
+//                   viewer 6 goes to a login page on a third origin (a lapsed session)
 //   /file/N.pdf     served as an attachment
 
 const http = require("http");
@@ -46,7 +47,8 @@ function item(n, viewerOrigin) {
   return page(TITLES[n], `<header class="site"><h1>${TITLES[n]}</h1></header><main class="item">${action}</main>`);
 }
 
-function viewer(n) {
+function viewer(n, port) {
+  if (n === 6) return page("Viewer", `<script>location.replace("http://[::1]:${port}/login");</script>`);
   return page("Viewer", `<div id="app">Loading…</div><script>
     setTimeout(function () {
       document.getElementById("app").innerHTML =
@@ -69,7 +71,8 @@ function start(port = 0) {
       let match;
       if (url.pathname === "/list") return send(200, "text/html", list(url.searchParams.get("page") === "2" ? 2 : 1));
       if ((match = /^\/item\/(\d)$/.exec(url.pathname)) && TITLES[match[1]]) return send(200, "text/html", item(Number(match[1]), viewerOrigin));
-      if ((match = /^\/viewer\/(\d)$/.exec(url.pathname))) return send(200, "text/html", viewer(Number(match[1])));
+      if ((match = /^\/viewer\/(\d)$/.exec(url.pathname))) return send(200, "text/html", viewer(Number(match[1]), server.address().port));
+      if (url.pathname === "/login") return send(200, "text/html", page("Sign in", "<h1>Sign in to your account</h1>"));
       if ((match = /^\/file\/(\d)\.pdf$/.exec(url.pathname))) {
         return send(200, "application/pdf", `%PDF-1.4 fake document ${match[1]}`, { "Content-Disposition": `attachment; filename="doc-${match[1]}.pdf"` });
       }

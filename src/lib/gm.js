@@ -57,8 +57,10 @@ export function createGm(env = globalThis) {
     if (env.navigator && env.navigator.clipboard) return env.navigator.clipboard.writeText(text);
   }
 
+  // The manager's handle comes back (close(), closed), so a tab opened for
+  // a run can be closed by the page that opened it.
   function openTab(url) {
-    if (has("GM_openInTab")) return void env.GM_openInTab(url, { active: true });
+    if (has("GM_openInTab")) return env.GM_openInTab(url, { active: true });
     if (gmNs && typeof gmNs.openInTab === "function") return void gmNs.openInTab(url, false);
     if (typeof env.open === "function") { const w = env.open(url, "_blank"); if (!w && env.location) env.location.href = url; return; }
     if (env.location) env.location.href = url;

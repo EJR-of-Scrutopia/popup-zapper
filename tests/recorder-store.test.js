@@ -29,12 +29,14 @@ describe("recorder store", () => {
     await store.writeLedger("https://a", { rows: { x: { status: "done" } } });
     store.writeLiveNow({ mode: "running", closing: [], note: "" });
     store.writeLeavingNow({ token: "t", at: 5 });
+    store.writeBeatNow({ token: "h", at: 7 });
     expect(typeof gm.values["pz-rec recording https://a"]).toBe("string");
     expect(gm.values["pz-rec live"]).toBe(JSON.stringify({ mode: "running", closing: [], note: "" }));
     expect(await store.readRecording("https://a")).toEqual({ id: "r1", steps: [] });
     expect((await store.readLedger("https://a")).rows.x.status).toBe("done");
     expect((await store.readLive()).mode).toBe("running");
     expect(await store.readLeaving()).toEqual({ token: "t", at: 5 });
+    expect(await store.readBeat()).toEqual({ token: "h", at: 7 });
   });
 
   it("reads a broken value as its default", async () => {

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   startRun, currentTask, whoActs, rowPicked, bindTab, advance, rowEnded, startTurning, turnStarted,
   pageTurned, listArrived, resumed, timedOut, failNote, sameList, stopRun, tokenPlan, overdue,
+  adoptToken, beatFresh, tooManyFailures, navigated,
 } from "../src/lib/recorder/engine.js";
 
 const A = "https://www.cibse.org";
@@ -151,6 +152,64 @@ describe("which pages take part", () => {
 
   it("leaves every page alone while idle", () => {
     expect(tokenPlan({ mode: "idle", closing: [], note: "" }, facts({ historyLength: 1 }))).toBe("none");
+  });
+});
+
+describe("taking over a token the same tab let go of", () => {
+  const leaving = { token: "H", at: 1000, origin: "https://www.cibse.org" };
+  const facts = (extra) => Object.assign({ origin: "https://login.example", referrerOrigin: "https://www.cibse.org", historyLength: 2, now: 2000, closing: [] }, extra);
+
+  it("takes it on another site, arriving from the site that let it go", () => {
+    expect(adoptToken(leaving, facts())).toBe("H");
+  });
+
+  it("never takes it on the same site: a tab there keeps its own storage, so it is another tab", () => {
+    expect(adoptToken(leaving, facts({ origin: "https://www.cibse.org" }))).toBeNull();
+  });
+
+  it("refuses a stale one, one waiting to close, a first page, or another referrer", () => {
+    expect(adoptToken(leaving, facts({ now: 6001 }))).toBeNull();
+    expect(adoptToken(leaving, facts({ closing: ["H"] }))).toBeNull();
+    expect(adoptToken(leaving, facts({ historyLength: 1 }))).toBeNull();
+    expect(adoptToken(leaving, facts({ referrerOrigin: "https://elsewhere" }))).toBeNull();
+    expect(adoptToken(null, facts())).toBeNull();
+  });
+});
+
+describe("the home tab's heartbeat", () => {
+  it("counts as alive for 150 s", () => {
+    expect(beatFresh({ token: "H", at: 0 }, 150000)).toBe(true);
+    expect(beatFresh({ token: "H", at: 0 }, 150001)).toBe(false);
+    expect(beatFresh(null, 0)).toBe(false);
+  });
+
+  it("lets no new page join a run whose home tab has gone", () => {
+    const live = { mode: "running", closing: [], note: "", run: Object.assign(inSteps(2), { since: 5000 }) };
+    const facts = { token: null, cloned: false, adopted: null, historyLength: 1, startedAt: 5300, now: 5300 };
+    expect(tokenPlan(live, Object.assign({ beatFresh: true }, facts))).toBe("new");
+    expect(tokenPlan(live, Object.assign({ beatFresh: false }, facts))).toBe("none");
+  });
+});
+
+describe("runs that go wrong", () => {
+  it("stops after three items fail in a row, a done item starting the count again", () => {
+    let run = inSteps(2);
+    run = rowEnded(run, 1, "failed").run;
+    run = rowEnded(run, 2, "failed").run;
+    expect(tooManyFailures(run)).toBe(false);
+    run = rowEnded(run, 3, "done").run;
+    expect(run.failStreak).toBe(0);
+    run = rowEnded(rowEnded(rowEnded(run, 4, "failed").run, 5, "failed").run, 6, "failed").run;
+    expect(tooManyFailures(run)).toBe(true);
+    expect(rowEnded(run, 7, "skipped").run.failStreak).toBe(3);
+  });
+
+  it("counts trips back to the list, and starts again on arrival or a new item", () => {
+    let run = startRun(rec, me("H"), 0);
+    run = navigated(navigated(run, 1), 2);
+    expect(run.navigations).toBe(2);
+    expect(listArrived(run, 3).navigations).toBe(0);
+    expect(rowPicked(run, row, 3).navigations).toBe(0);
   });
 });
 

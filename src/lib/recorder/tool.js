@@ -12,6 +12,7 @@ import { newDraft, addClick, addBack, finishRecording, removeStep, insertWait, s
 import {
   startRun, currentTask, whoActs, rowPicked, bindTab, advance, rowEnded, listArrived, startTurning, turnStarted,
   pageTurned, resumed, timedOut, failNote, sameList, stopRun, tokenPlan, overdue,
+  adoptToken, beatFresh, tooManyFailures, navigated, FAIL_STREAK_LIMIT, NAVIGATION_LIMIT,
 } from "./engine.js";
 import { describeStepTarget, refineWords, rowsFor, rowOf, findInRow, findOnPage, parseWords, wantedRows, pageHasWords } from "./targets.js";
 import { highlightWords, clearHighlights, MARK, SKIP } from "./highlight.js";
@@ -25,7 +26,7 @@ const TAB_KEY = "pz-rec tab";
 const POSITION_KEY = "pz-rec position";
 const ROW_MARK = "data-pz-rec";
 const POLL_MS = 300;
-const LEAVING_MS = 5000;
+const BEAT_EVERY_MS = 3000;
 const UNBOUND_GIVE_UP_MS = 60000;
 const NAV_RETRY_MS = 10000;
 const NOT_A_LIST = "That isn't one of a list of items. Click the first item's button.";
@@ -56,6 +57,36 @@ function fileStamp(date) {
   const two = (number) => (number < 10 ? "0" : "") + number;
   return date.getFullYear() + two(date.getMonth() + 1) + two(date.getDate()) + "-"
     + two(date.getHours()) + two(date.getMinutes()) + two(date.getSeconds());
+}
+
+// A link's address, when it is a real one: not "#", not script, and not
+// this same page with another fragment (a link that only runs a handler).
+export function realHref(link, pageHref) {
+  if (!link || typeof link.getAttribute !== "function") return "";
+  const raw = String(link.getAttribute("href") || "").trim();
+  if (!raw || raw.charAt(0) === "#" || /^javascript:/i.test(raw)) return "";
+  const href = String(link.href || "");
+  const bare = (url) => String(url).split("#")[0];
+  return href && bare(href) !== bare(pageHref) ? href : "";
+}
+
+// Stands in for a page's window.open while a replayed click runs: the
+// address goes to the manager's tab opener. A blank one is not opened; an
+// address set on the returned window afterwards is opened instead.
+export function openStand(openTab, base) {
+  return function (url) {
+    const go = (where) => {
+      const text = String(where == null ? "" : where).trim();
+      if (!text || /^about:blank$/i.test(text)) return;
+      try { openTab(new URL(text, base).href); } catch { /* nothing to open */ }
+    };
+    go(url);
+    const location = { assign: go, replace: go, toString: () => "" };
+    Object.defineProperty(location, "href", { get: () => "", set: go });
+    const stub = { closed: false, focus() {}, close() {}, document: { open() {}, write() {}, close() {} } };
+    Object.defineProperty(stub, "location", { get: () => location, set: go });
+    return stub;
+  };
 }
 
 // One recorded click from the element clicked. The first must be on an item
@@ -114,12 +145,11 @@ export function createRecorderTool({ gm, pageWindow = window, version = "0.0.0",
   // The same tab after moving to another site has a fresh sessionStorage: it
   // takes the token a page let go of within 5 s, when it came from that site.
   async function adoptable(live) {
-    if (win.history.length <= 1) return null;
-    const leaving = await store.readLeaving();
-    if (!leaving || Date.now() - leaving.at > LEAVING_MS || live.closing.indexOf(leaving.token) >= 0) return null;
     let from = "";
     try { from = new URL(doc.referrer).origin; } catch { from = ""; }
-    return from && from === leaving.origin ? leaving.token : null;
+    return adoptToken(await store.readLeaving(), {
+      origin: win.location.origin, referrerOrigin: from, historyLength: win.history.length, now: Date.now(), closing: live.closing,
+    });
   }
 
   function me(now = Date.now()) {
@@ -157,6 +187,27 @@ export function createRecorderTool({ gm, pageWindow = window, version = "0.0.0",
   let quietWatch = null;
   let highlightAt = 0;
   let highlightKey = "";
+  let lastBeat = 0;
+
+  // The home tab's sign of life, so other tabs never carry on a run whose
+  // tab has gone.
+  function beat(token) {
+    lastBeat = Date.now();
+    try { store.writeBeatNow({ token, at: lastBeat }); } catch { /* the next tick tries again */ }
+  }
+
+  // Tabs this page opened for the run, closed by their handle when the item
+  // ends: a tab that never takes a step (a login page, a copy of the item)
+  // is closed all the same.
+  const handles = [];
+  function keepHandle(handle) {
+    if (handle && typeof handle.close === "function") handles.push(handle);
+  }
+  function closeHandles() {
+    for (const handle of handles.splice(0)) {
+      try { if (!handle.closed) handle.close(); } catch { /* already gone */ }
+    }
+  }
 
   function startLoop() {
     if (timer) return;
@@ -196,6 +247,7 @@ export function createRecorderTool({ gm, pageWindow = window, version = "0.0.0",
       recCache = await store.readRecording(origin);
       ledgerCache = await store.readLedger(origin);
       const bound = live.run && token && Object.keys(live.run.tabs).some((tab) => live.run.tabs[tab] === token);
+      if (live.mode === "running" && token && live.run.home === token && Date.now() - lastBeat >= BEAT_EVERY_MS) beat(token);
       if (live.mode === "running" && token && !busy) {
         busy = true;
         try { await act(live, recCache, ledgerCache); } finally { busy = false; }
@@ -245,18 +297,28 @@ export function createRecorderTool({ gm, pageWindow = window, version = "0.0.0",
   }
 
   async function finish(live, note) {
+    closeHandles();
     await commit(live, stopRun(live, note));
     say(note);
   }
 
+  // Three failures in a row (a lapsed login, a changed site) stop the run.
   async function endRow(live, run, rec, ledger, status, note) {
     if (run.row) {
       const kept = markRow(ledger, run.row.id, { status, title: run.row.title, note, at: new Date().toISOString(), page: run.page });
       await store.writeLedger(rec.origin, kept);
       ledgerCache = kept;
     }
-    const ended = rowEnded(run, Date.now());
-    return commit(live, Object.assign({}, live, { run: ended.run, closing: ended.closing }));
+    const ended = rowEnded(run, Date.now(), status);
+    const next = Object.assign({}, live, { run: ended.run, closing: ended.closing });
+    closeHandles();
+    if (status === "failed" && tooManyFailures(ended.run)) {
+      const words = `Stopped: ${FAIL_STREAK_LIMIT} items failed in a row. Last: ${note}`;
+      const written = await commit(live, stopRun(next, words));
+      say(words);
+      return written;
+    }
+    return commit(live, next);
   }
 
   async function moveOn(live, run, rec, ledger, mine) {
@@ -265,11 +327,15 @@ export function createRecorderTool({ gm, pageWindow = window, version = "0.0.0",
     return endRow(live, out.run, rec, ledger, "done", "");
   }
 
-  function navigateTo(url) {
+  // Back to the list's address, at most three times without arriving: a
+  // site that rewrites the address would otherwise reload it for ever.
+  async function goToList(live, run) {
     if (Date.now() - navigatedAt < NAV_RETRY_MS) return;
+    if ((run.navigations || 0) >= NAVIGATION_LIMIT) { await finish(live, "The list page didn't come back at " + run.listUrl); return; }
+    if (!await commit(live, Object.assign({}, live, { run: navigated(run, Date.now()) }))) return;
     navigatedAt = Date.now();
     hold(5000);
-    win.location.href = url;
+    win.location.href = run.listUrl;
   }
 
   function locate(step, index, run, rec) {
@@ -300,12 +366,10 @@ export function createRecorderTool({ gm, pageWindow = window, version = "0.0.0",
     if (!step.opens) { fire(el); return; }
     let link = null;
     try { link = el.closest("a[href]"); } catch { link = null; }
-    if (link && link.href && !/^javascript:/i.test(link.href)) { gm.openTab(link.href); return; }
+    const href = realHref(link, win.location.href);
+    if (href) { keepHandle(gm.openTab(href)); return; }
     const original = pageWindow.open;
-    const stand = function (url) {
-      try { gm.openTab(new URL(String(url), win.location.href).href); } catch { /* nothing to open */ }
-      return { closed: false, focus() {}, close() {}, location: {} };
-    };
+    const stand = openStand((url) => keepHandle(gm.openTab(url)), win.location.href);
     try { pageWindow.open = stand; } catch { /* left as it is */ }
     try { fire(el); } finally {
       setTimeout(() => { try { if (pageWindow.open === stand) pageWindow.open = original; } catch { /* nothing */ } }, 1000);
@@ -322,6 +386,10 @@ export function createRecorderTool({ gm, pageWindow = window, version = "0.0.0",
     const now = Date.now();
     const mine = me(now);
     const task = currentTask(run, rec);
+    if (mine.token !== run.home && !beatFresh(await store.readBeat(), now)) {
+      say("The run's tab has gone quiet. Press Stop if it was closed.");
+      return;
+    }
     const who = whoActs(run, rec, mine, task);
     if (!who.mine) {
       // A step nobody is doing (its tab never opened, or was closed by hand).
@@ -331,8 +399,9 @@ export function createRecorderTool({ gm, pageWindow = window, version = "0.0.0",
     if (mine.token === run.home) comeForward();
 
     if (task.type === "pick-row") {
+      closeHandles();
       if (!sameList(win.location.href, run.listUrl)) {
-        if (now - run.since > 1500) navigateTo(run.listUrl);
+        if (now - run.since > 1500) await goToList(live, run);
         return;
       }
       const rows = rowsHere(rec);
@@ -348,8 +417,9 @@ export function createRecorderTool({ gm, pageWindow = window, version = "0.0.0",
     }
 
     if (task.type === "unwind") {
+      closeHandles();
       if (sameList(win.location.href, run.listUrl)) await commit(live, Object.assign({}, live, { run: listArrived(run, now) }));
-      else if (now - run.since > 1500) navigateTo(run.listUrl);
+      else if (now - run.since > 1500) await goToList(live, run);
       return;
     }
 
@@ -404,6 +474,7 @@ export function createRecorderTool({ gm, pageWindow = window, version = "0.0.0",
     }
     if (step.kind === "back") {
       if (!await moveOn(live, ready, rec, ledger, mine)) return;
+      closeHandles();
       hold(5000);
       win.history.back();
       return;
@@ -611,6 +682,7 @@ export function createRecorderTool({ gm, pageWindow = window, version = "0.0.0",
     if (live.mode === "running") { await writeFresh(Object.assign({}, live, { mode: "paused" })); say("Paused."); return; }
     if (live.mode === "paused" && live.run) {
       await writeFresh(Object.assign({}, live, { mode: "running", run: resumed(live.run, Date.now()) }));
+      if (live.run.home === readToken()) beat(live.run.home);
       startLoop();
       return;
     }
@@ -621,6 +693,7 @@ export function createRecorderTool({ gm, pageWindow = window, version = "0.0.0",
     await store.writeLedger(rec.origin, ledger);
     const run = startRun(rec, Object.assign(me(), { token }), Date.now());
     await writeFresh({ mode: "running", run, closing: live.closing, note: "" });
+    beat(token);
     startLoop();
     say("Playing.");
   }
@@ -629,6 +702,7 @@ export function createRecorderTool({ gm, pageWindow = window, version = "0.0.0",
     const live = await store.readLive();
     if (live.mode === "recording") { await stopRecording(live); return; }
     if (live.mode === "idle") { say("Nothing is running."); return; }
+    closeHandles();
     await writeFresh(stopRun(live, "Stopped."));
     say("Stopped.");
   }
@@ -763,13 +837,23 @@ export function createRecorderTool({ gm, pageWindow = window, version = "0.0.0",
     let opener = false;
     try { opener = !!win.opener; } catch { opener = true; }
     const cloned = !!token && win.history.length === 1 && opener && navType() === "navigate";
+    const adopted = !token || cloned ? await adoptable(live) : null;
+    const alive = beatFresh(await store.readBeat(), Date.now());
     const plan = tokenPlan(live, {
-      token, cloned, adopted: !token || cloned ? await adoptable(live) : null,
-      historyLength: win.history.length, startedAt, now: Date.now(),
+      token, cloned, adopted, historyLength: win.history.length, startedAt, now: Date.now(), beatFresh: alive,
     });
     if (plan === "none") return false;
-    if (plan === "adopt") keepToken((await store.readLeaving()).token);
+    if (plan === "adopt") keepToken(adopted);
     if (plan === "new") keepToken(newId());
+    // Landed: a note that this tab was leaving is no longer for anyone.
+    const leaving = await store.readLeaving();
+    if (leaving && leaving.token === readToken()) store.writeLeavingNow(null);
+    // The run's own tab back after a long absence (a browser restart brings
+    // sessionStorage back) pauses rather than clicking on unasked.
+    if (live.mode === "running" && live.run && live.run.home === readToken() && !alive) {
+      await writeFresh(Object.assign({}, live, { mode: "paused", note: "" }));
+      say("Paused: this tab was away from the run. Press Resume to carry on.");
+    }
     if (live.mode === "recording") {
       listenForClicks();
       if (cameBack()) await noteBack();

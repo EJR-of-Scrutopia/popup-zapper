@@ -103,12 +103,16 @@ it with **⏺ Steps** on the Batch clicker, or the **Step recorder** menu comman
   removes a step. **Skip items with** and **Only items with** filter the list by the
   items' own words, and **Highlight** marks words on every page.
 - A step whose button does not show within **Step timeout** fails that item and the
-  run goes on. The next Play tries failed items again. **Reset** forgets which items
-  are done (press twice). **Export** saves the steps and the ledger as JSON; send that
-  file when a site does not behave.
+  run goes on; three failures in a row (a lapsed login, say) stop the run. The next
+  Play tries failed items again. **Reset** forgets which items are done (press twice).
+  **Export** saves the steps and the ledger as JSON; send that file when a site does
+  not behave.
+- If the run's own tab is closed, the other tabs stop taking steps; after a browser
+  restart the run comes back paused, never clicking on by itself.
 
 Turn off *Ask where to save each file*, allow automatic downloads for the viewer's
-site, and log in before you record.
+site, and log in before you record. Keep the browser window visible while it runs:
+a hidden window slows its timers to a crawl.
 
 ## Develop
 

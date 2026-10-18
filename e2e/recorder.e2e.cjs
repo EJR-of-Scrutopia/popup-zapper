@@ -35,7 +35,12 @@ const SHIM = `(() => {
     openInTab: (url) => { window.__pzOpenTab(url); },
     addStyle: () => {},
   };
-  window.GM_openInTab = (url) => { window.__pzOpenTab(url); return {}; };
+  window.GM_openInTab = (url) => {
+    const id = String(Math.random());
+    window.__pzOpenTab(url, id);
+    const handle = { closed: false, close() { handle.closed = true; window.__pzCloseOpened(id); } };
+    return handle;
+  };
   window.GM_registerMenuCommand = () => {};
   window.GM_setClipboard = () => {};
   window.GM_xmlhttpRequest = () => {};
@@ -67,8 +72,14 @@ async function main() {
   context.on("page", watch);
   await context.exposeBinding("__pzGet", (source, key) => (store.has(key) ? store.get(key) : null));
   await context.exposeBinding("__pzSet", (source, key, value) => { store.set(key, value); });
-  await context.exposeBinding("__pzOpenTab", async (source, url) => {
+  const openedById = new Map();
+  await context.exposeBinding("__pzCloseOpened", async (source, id) => {
+    const page = openedById.get(id);
+    if (page) await page.close().catch(() => {});
+  });
+  await context.exposeBinding("__pzOpenTab", async (source, url, id) => {
     const page = await context.newPage();
+    if (id) openedById.set(id, page);
     await page.goto(url).catch(() => {});
     await page.bringToFront().catch(() => {});
   });
@@ -125,6 +136,10 @@ async function main() {
     const rec = JSON.parse(store.get("pz-rec recording " + A));
     check(rec.steps.map((step) => step.kind).join(",") === "click,check,click,click,wait,close,back", "the steps read click, check, click, click, wait, close, back");
     check(rec.steps[4].seconds === 2, "the wait is 2 s");
+    await act(home, "rec-timeout").fill("5");
+    await act(home, "rec-timeout").dispatchEvent("change");
+    await wait(600);
+    check(JSON.parse(store.get("pz-rec recording " + A)).timeout === 5, "the step timeout is 5 s");
 
     // Play.
     const started = Date.now();
@@ -141,12 +156,14 @@ async function main() {
     await wait(1500);
     const got = downloads.slice().sort();
     console.log("  downloads: " + got.join(", "));
-    check(got.join(",") === "doc-1.pdf,doc-2.pdf,doc-3.pdf,doc-4.pdf,doc-6.pdf", "items 1, 2, 3, 4 and 6 downloaded once each");
+    check(got.join(",") === "doc-1.pdf,doc-2.pdf,doc-3.pdf,doc-4.pdf", "items 1, 2, 3 and 4 downloaded once each");
     const rows = Object.values(ledger().rows);
-    check(rows.filter((row) => row.status === "done").length === 5, "the ledger holds 5 done");
+    check(rows.filter((row) => row.status === "done").length === 4, "the ledger holds 4 done");
+    const failed = rows.filter((row) => row.status === "failed");
+    check(failed.length === 1 && /TM65/.test(failed[0].title) && failed[0].note === 'step 4: "Download" not found in 5 s', "item 6 fails: its viewer went to a login page");
     const skipped = rows.filter((row) => row.status === "skipped");
     check(skipped.length === 1 && /Code M/.test(skipped[0].title) && skipped[0].note === 'page says "Buy now"', "item 5 is skipped because its page says Buy now");
-    check(context.pages().length === 1, "every viewer tab is closed");
+    check(context.pages().length === 1, "every viewer tab is closed, the login tab too");
     check(/\/list\?page=2$/.test(home.url()), "the home tab is on list page 2");
     console.log("recorder e2e: PASS");
   } catch (error) {

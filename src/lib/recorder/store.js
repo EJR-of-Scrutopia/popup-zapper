@@ -4,6 +4,7 @@
 
 const LIVE = "pz-rec live";
 const LEAVING = "pz-rec leaving";
+const BEAT = "pz-rec beat";
 const RECORDING = "pz-rec recording ";
 const LEDGER = "pz-rec ledger ";
 
@@ -47,6 +48,11 @@ export function createRecorderStore(gm) {
       return isObject(value) && typeof value.token === "string" ? value : null;
     },
     writeLeavingNow: (leaving) => gm.setNow(LEAVING, JSON.stringify(leaving)),
+    readBeat: async () => {
+      const value = await read(BEAT);
+      return isObject(value) && typeof value.token === "string" && Number.isFinite(value.at) ? value : null;
+    },
+    writeBeatNow: (beat) => gm.setNow(BEAT, JSON.stringify(beat)),
     readRecording: async (origin) => {
       const value = await read(RECORDING + origin);
       return isObject(value) && Array.isArray(value.steps) ? value : null;

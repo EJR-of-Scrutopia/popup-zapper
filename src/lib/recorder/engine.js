@@ -12,6 +12,10 @@
 export const LIST_WAIT_MS = 15000;
 export const PAGE_WAIT_MS = 20000;
 export const FRESH_SLACK_MS = 1000;
+export const LEAVING_MS = 5000;
+export const BEAT_STALE_MS = 150000;
+export const FAIL_STREAK_LIMIT = 3;
+export const NAVIGATION_LIMIT = 3;
 
 const no = { mine: false, bind: false, skip: false };
 
@@ -71,7 +75,7 @@ export function whoActs(run, rec, me, task) {
 }
 
 export function rowPicked(run, row, now) {
-  return Object.assign({}, run, { phase: "steps", at: 0, row: { id: row.id, title: row.title }, since: now });
+  return Object.assign({}, run, { phase: "steps", at: 0, row: { id: row.id, title: row.title }, since: now, navigations: 0 });
 }
 
 export function bindTab(run, recTab, token) {
@@ -95,17 +99,29 @@ export function advance(run, rec, me, now) {
   return { run: next, finished: next.at >= rec.steps.length };
 }
 
-export function rowEnded(run, now) {
+// A failed item adds to the run of failures, a done one ends it, a skipped
+// one leaves it as it was.
+export function rowEnded(run, now, status = "done") {
+  const streak = run.failStreak || 0;
   return {
     closing: run.opened.slice(),
     run: Object.assign({}, run, {
       phase: "unwind", at: 0, row: null, tabs: { [run.homeTab]: run.home }, opened: [], visits: {}, since: now,
+      failStreak: status === "failed" ? streak + 1 : status === "done" ? 0 : streak,
     }),
   };
 }
 
+export function tooManyFailures(run) {
+  return (run.failStreak || 0) >= FAIL_STREAK_LIMIT;
+}
+
+export function navigated(run, now) {
+  return Object.assign({}, run, { navigations: (run.navigations || 0) + 1, since: now });
+}
+
 export function listArrived(run, now) {
-  return Object.assign({}, run, { phase: "row", since: now, turnFrom: null });
+  return Object.assign({}, run, { phase: "row", since: now, turnFrom: null, navigations: 0 });
 }
 
 export function startTurning(run, now) {
@@ -150,10 +166,11 @@ export function failNote(task, rec) {
 // token was copied from the tab that opened it), takes one its tab let go of
 // on another site, or joins as a new tab when it opened during a run's step
 // or soon after a recorded step.
-export function tokenPlan(live, { token, cloned, adopted, historyLength, startedAt, now }) {
+export function tokenPlan(live, { token, cloned, adopted, historyLength, startedAt, now, beatFresh: alive }) {
   if (token && !cloned) return "keep";
   if (adopted) return "adopt";
   if (live.mode === "running" && live.run) {
+    if (alive === false) return "none";
     if (historyLength === 1 || startedAt >= live.run.since - FRESH_SLACK_MS) return "new";
     return "none";
   }
@@ -167,6 +184,22 @@ export function tokenPlan(live, { token, cloned, adopted, historyLength, started
 function listKey(href) {
   const url = new URL(String(href));
   return url.origin + url.pathname.replace(/\/+$/, "") + url.search;
+}
+
+// A page with no token takes the one its tab let go of on another site,
+// within 5 s, arriving from that site. Never on the same site: a tab moving
+// within one site keeps its sessionStorage, so a tokenless page there is
+// another tab.
+export function adoptToken(leaving, { origin, referrerOrigin, historyLength, now, closing }) {
+  if (!leaving || historyLength <= 1 || now - leaving.at > LEAVING_MS) return null;
+  if ((closing || []).indexOf(leaving.token) >= 0 || origin === leaving.origin) return null;
+  return referrerOrigin && referrerOrigin === leaving.origin ? leaving.token : null;
+}
+
+// The home tab writes a beat every few seconds while it runs; a run whose
+// beat has stopped has lost its tab.
+export function beatFresh(beat, now) {
+  return !!beat && now - beat.at <= BEAT_STALE_MS;
 }
 
 export function sameList(a, b) {
