@@ -23,9 +23,18 @@ describe("highlighting", () => {
 });
 
 describe("recorder panel", () => {
-  it("opens with close, record, play, stop and reset first, marked as our own", () => {
+  it("offers Back one beside Reset, to have the last finished item done again", () => {
+    const onBack = vi.fn();
+    const view = createRecorderPanel({ onBack });
+    const back = act(view.el, "rec-back");
+    expect(back.textContent).toBe("↶ Back one");
+    back.click();
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens with close, record, play, stop, reset and back one first, marked as our own", () => {
     const view = createRecorderPanel({});
-    expect(acts(view.el).slice(0, 5)).toEqual(["rec-close", "rec-record", "rec-play", "rec-stop", "rec-reset"]);
+    expect(acts(view.el).slice(0, 6)).toEqual(["rec-close", "rec-record", "rec-play", "rec-stop", "rec-reset", "rec-back"]);
     expect(view.el.getAttribute("data-pz")).toBe("recorder");
     for (const name of ["rec-add-wait", "rec-check-text", "rec-add-check", "rec-skip", "rec-only", "rec-highlight", "rec-pages", "rec-timeout", "rec-export"]) {
       expect(act(view.el, name)).not.toBeNull();

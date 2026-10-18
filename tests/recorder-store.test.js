@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createRecorderStore, markRow, ledgerTally, forgetFailed, ledgerLines } from "../src/lib/recorder/store.js";
+import { createRecorderStore, markRow, ledgerTally, forgetFailed, ledgerLines, undoLast } from "../src/lib/recorder/store.js";
 
 function fakeGm(sync = true) {
   const values = {};
@@ -67,6 +67,22 @@ describe("ledger", () => {
 
   it("counts each status", () => {
     expect(ledgerTally(ledger())).toEqual({ done: 1, skipped: 1, failed: 1 });
+  });
+
+  it("takes back the most recent done or skipped item, one per press", () => {
+    let held = { rows: {} };
+    held = markRow(held, "a", { status: "done", title: "A", note: "", at: "2026-10-18T21:14:44.000Z", page: 1 });
+    held = markRow(held, "b", { status: "skipped", title: "B", note: "", at: "2026-10-18T21:14:52.000Z", page: 1 });
+    held = markRow(held, "c", { status: "done", title: "C", note: "", at: "2026-10-18T21:14:58.000Z", page: 1 });
+    held = markRow(held, "d", { status: "failed", title: "D", note: "", at: "2026-10-18T21:15:04.000Z", page: 1 });
+    const first = undoLast(held);
+    expect(first.row).toEqual({ id: "c", title: "C", status: "done" });
+    expect(Object.keys(first.ledger.rows)).toEqual(["a", "b", "d"]);
+    const second = undoLast(first.ledger);
+    expect(second.row.id).toBe("b");
+    const third = undoLast(second.ledger);
+    expect(third.row.id).toBe("a");
+    expect(undoLast(third.ledger)).toEqual({ ledger: third.ledger, row: null });
   });
 
   it("forgets only the failed items, so the next Play tries them again", () => {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Popup Zapper
 // @namespace    https://github.com/EJR-of-Scrutopia/popup-zapper
-// @version      2.3.1
+// @version      2.3.2
 // @description  Remove login/consent/newsletter/paywall popups, reveal blurred/gated content, defeat reload traps, learn popups by click, click many checkboxes or buttons in batches, and record one item's clicks to repeat for every item in a list.
 // @author       Param
 // @homepageURL  https://github.com/EJR-of-Scrutopia/popup-zapper
@@ -5631,6 +5631,19 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     for (const id of Object.keys(ledger.rows)) if (ledger.rows[id].status !== "failed") rows[id] = ledger.rows[id];
     return Object.assign({}, ledger, { rows });
   }
+  function undoLast(ledger) {
+    let last = null;
+    for (const id of Object.keys(ledger.rows)) {
+      const held2 = ledger.rows[id];
+      if (held2.status !== "done" && held2.status !== "skipped") continue;
+      if (!last || String(held2.at || "") >= String(ledger.rows[last].at || "")) last = id;
+    }
+    if (!last) return { ledger, row: null };
+    const rows = Object.assign({}, ledger.rows);
+    const held = rows[last];
+    delete rows[last];
+    return { ledger: Object.assign({}, ledger, { rows }), row: { id: last, title: held.title, status: held.status } };
+  }
   function ledgerLines(ledger) {
     return Object.keys(ledger.rows).filter((id) => ledger.rows[id].status !== "done").map((id) => {
       const held = ledger.rows[id];
@@ -6197,6 +6210,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     onPlay,
     onStop,
     onReset,
+    onBack,
     onExport,
     onSelectStep,
     onRemoveStep,
@@ -6236,6 +6250,13 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     controls.appendChild(button2(t, "rec-stop", "\u25A0 Stop", onStop, "Stop the run and close the tabs it opened"));
     const reset = button2(t, "rec-reset", "\u21BA Reset", onReset, "Forget which items are done on this site");
     controls.appendChild(reset);
+    controls.appendChild(button2(
+      t,
+      "rec-back",
+      "\u21B6 Back one",
+      onBack,
+      "Have the last item marked done or skipped done again at the next Play; press again for the one before"
+    ));
     body.appendChild(controls);
     const list = tag("div");
     list.setAttribute("data-pz-steps", "");
@@ -7143,6 +7164,26 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       clearRowPaint();
       say("Forgot every item; Play starts from the first.");
     }
+    async function backOne() {
+      const live = await store.readLive();
+      if (live.mode === "running") {
+        say("Pause first, then Back one.");
+        return;
+      }
+      if (live.mode === "recording") {
+        say("Stop recording first.");
+        return;
+      }
+      const origin2 = recOriginOf(live);
+      const out = undoLast(await store.readLedger(origin2));
+      if (!out.row) {
+        say("Nothing done or skipped to take back.");
+        return;
+      }
+      await store.writeLedger(origin2, out.ledger);
+      ledgerCache = out.ledger;
+      say(`Back one: "${String(out.row.title).slice(0, 70)}" will be done again.`);
+    }
     async function editRecording(change) {
       const live = await store.readLive();
       if (live.mode !== "idle") {
@@ -7200,6 +7241,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
         onPlay: run(play),
         onStop: run(stop),
         onReset: run(reset),
+        onBack: run(backOne),
         onExport: saveExport,
         onSelectStep: (index) => {
           selected = index === selected ? -1 : index;

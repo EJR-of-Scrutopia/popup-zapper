@@ -129,6 +129,29 @@ describe("the recorder tool", () => {
     tool.dispose();
   });
 
+  it("Back one forgets the last finished item and names it, but never while a run goes", async () => {
+    const gm = fakeGm();
+    const origin = location.origin;
+    gm.values["pz-rec ledger " + origin] = JSON.stringify({ rows: {
+      a: { status: "done", title: "Guide D14", note: "", at: "2026-10-18T21:14:58.000Z", page: 1 },
+      b: { status: "done", title: "Guide D15", note: "", at: "2026-10-18T21:15:04.000Z", page: 1 },
+    } });
+    const tool = createRecorderTool({ gm, version: "test" });
+    tool.open();
+    const panel = document.querySelector('[data-pz="recorder"]');
+    panel.querySelector('[data-act="rec-back"]').click();
+    await new Promise((done) => setTimeout(done, 20));
+    expect(Object.keys(JSON.parse(gm.values["pz-rec ledger " + origin]).rows)).toEqual(["a"]);
+    expect(panel.textContent).toContain('Back one: "Guide D15" will be done again.');
+    gm.values["pz-rec live"] = JSON.stringify({ mode: "running", closing: [], note: "", run: { origin, tabs: {}, opened: [], home: "x" } });
+    panel.querySelector('[data-act="rec-back"]').click();
+    await new Promise((done) => setTimeout(done, 20));
+    expect(Object.keys(JSON.parse(gm.values["pz-rec ledger " + origin]).rows)).toEqual(["a"]);
+    expect(panel.textContent).toContain("Pause first, then Back one.");
+    tool.close();
+    tool.dispose();
+  });
+
   it("opens its panel on the page", () => {
     const tool = createRecorderTool({ gm: fakeGm(), version: "test" });
     tool.open();

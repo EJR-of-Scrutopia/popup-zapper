@@ -7,7 +7,7 @@
 // turn it is acts, writing the next state before it acts. Until the recorder
 // is used, it changes nothing on any page.
 
-import { createRecorderStore, markRow, ledgerTally, forgetFailed, ledgerLines } from "./store.js";
+import { createRecorderStore, markRow, ledgerTally, forgetFailed, ledgerLines, undoLast } from "./store.js";
 import { newDraft, addClick, addBack, finishRecording, removeStep, insertWait, setWait, insertCheck, describeStep } from "./steps.js";
 import {
   startRun, currentTask, whoActs, rowPicked, bindTab, advance, rowEnded, listArrived, startTurning, turnStarted,
@@ -746,6 +746,21 @@ export function createRecorderTool({ gm, pageWindow = window, version = "0.0.0",
     say("Forgot every item; Play starts from the first.");
   }
 
+  // Back one: the last item marked done or skipped is done again at the next
+  // Play (one marked done though no file came, say). Each press goes one
+  // further back.
+  async function backOne() {
+    const live = await store.readLive();
+    if (live.mode === "running") { say("Pause first, then Back one."); return; }
+    if (live.mode === "recording") { say("Stop recording first."); return; }
+    const origin = recOriginOf(live);
+    const out = undoLast(await store.readLedger(origin));
+    if (!out.row) { say("Nothing done or skipped to take back."); return; }
+    await store.writeLedger(origin, out.ledger);
+    ledgerCache = out.ledger;
+    say(`Back one: "${String(out.row.title).slice(0, 70)}" will be done again.`);
+  }
+
   async function editRecording(change) {
     const live = await store.readLive();
     if (live.mode !== "idle") { say(live.mode === "recording" ? "Stop recording first." : "Stop the run first."); return; }
@@ -796,6 +811,7 @@ export function createRecorderTool({ gm, pageWindow = window, version = "0.0.0",
       onPlay: run(play),
       onStop: run(stop),
       onReset: run(reset),
+      onBack: run(backOne),
       onExport: saveExport,
       onSelectStep: (index) => { selected = index === selected ? -1 : index; render(liveCache, recCache, ledgerCache); },
       onRemoveStep: (index) => run(() => editRecording((rec) => removeStep(rec, index)))(),

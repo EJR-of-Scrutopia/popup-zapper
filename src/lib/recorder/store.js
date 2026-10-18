@@ -83,6 +83,22 @@ export function forgetFailed(ledger) {
   return Object.assign({}, ledger, { rows });
 }
 
+// Back one: the most recent item marked done or skipped is forgotten, so the
+// next Play does it again. Failed items need no help: Play retries them.
+export function undoLast(ledger) {
+  let last = null;
+  for (const id of Object.keys(ledger.rows)) {
+    const held = ledger.rows[id];
+    if (held.status !== "done" && held.status !== "skipped") continue;
+    if (!last || String(held.at || "") >= String(ledger.rows[last].at || "")) last = id;
+  }
+  if (!last) return { ledger, row: null };
+  const rows = Object.assign({}, ledger.rows);
+  const held = rows[last];
+  delete rows[last];
+  return { ledger: Object.assign({}, ledger, { rows }), row: { id: last, title: held.title, status: held.status } };
+}
+
 export function ledgerLines(ledger) {
   return Object.keys(ledger.rows).filter((id) => ledger.rows[id].status !== "done").map((id) => {
     const held = ledger.rows[id];
