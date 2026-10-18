@@ -28,6 +28,18 @@ export function createGm(env = globalThis) {
     if (env.localStorage) return void env.localStorage.setItem(key, val);
   }
 
+  // At once, for a write that must land before the page goes (a recorded
+  // click on a link): GM_* storage is synchronous where it exists.
+  function getNow(key) {
+    return has("GM_getValue") ? env.GM_getValue(key) : undefined;
+  }
+
+  function setNow(key, val) {
+    if (has("GM_setValue")) { env.GM_setValue(key, val); return true; }
+    set(key, val);
+    return false;
+  }
+
   function xhr(details) {
     if (has("GM_xmlhttpRequest")) return env.GM_xmlhttpRequest(details);
     if (gmNs && typeof gmNs.xmlHttpRequest === "function") return gmNs.xmlHttpRequest(details);
@@ -52,5 +64,5 @@ export function createGm(env = globalThis) {
     if (env.location) env.location.href = url;
   }
 
-  return { get, set, xhr, clipboard, openTab };
+  return { get, set, getNow, setNow, xhr, clipboard, openTab };
 }

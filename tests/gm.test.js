@@ -54,4 +54,22 @@ describe("createGm", () => {
     createGm({ open }).openTab("u");
     expect(open).toHaveBeenCalledWith("u", "_blank");
   });
+
+  it("writes at once with GM_setValue when it exists, for a click that leaves the page", () => {
+    const store = {};
+    const asyncSet = vi.fn(async () => {});
+    const gm = createGm({ GM: { setValue: asyncSet }, GM_setValue: (k, v) => { store[k] = v; }, GM_getValue: (k) => store[k] });
+    expect(gm.setNow("a", "1")).toBe(true);
+    expect(store.a).toBe("1");
+    expect(asyncSet).not.toHaveBeenCalled();
+    expect(gm.getNow("a")).toBe("1");
+  });
+
+  it("falls back to the async write, and reads nothing at once, without GM_* storage", () => {
+    const asyncSet = vi.fn(async () => {});
+    const gm = createGm({ GM: { setValue: asyncSet, getValue: async () => "x" } });
+    expect(gm.setNow("a", "1")).toBe(false);
+    expect(asyncSet).toHaveBeenCalledWith("a", "1");
+    expect(gm.getNow("a")).toBeUndefined();
+  });
 });
