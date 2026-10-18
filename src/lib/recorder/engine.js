@@ -156,6 +156,18 @@ export function overdue(run, rec, now, task) {
   return now - run.since > (extra + (rec.timeout || 30) + 5) * 1000;
 }
 
+// A freshly loaded page is clicked only once its own scripts have taken over
+// its buttons: CIBSE wires Download at DOM ready, and a click before then
+// follows the bare link instead of opening the agreement box. Loaded and
+// quiet for half a second, or loaded 3 s ago on a page that never stops.
+export const SETTLE_QUIET_MS = 500;
+export const SETTLE_CAP_MS = 3000;
+
+export function pageSettled({ readyState, now, lastChange, completeAt }) {
+  if (readyState !== "complete") return false;
+  return now - lastChange >= SETTLE_QUIET_MS || now - completeAt >= SETTLE_CAP_MS;
+}
+
 export function failNote(task, rec) {
   const target = task.step && task.step.target;
   if (!target) return `step ${task.index + 1}: ${task.step.kind} did not finish in ${rec.timeout || 30} s`;

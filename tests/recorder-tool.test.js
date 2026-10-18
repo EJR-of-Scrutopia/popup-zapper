@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { createRecorderTool, stepFromClick, realHref, openStand } from "../src/lib/recorder/tool.js";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { createRecorderTool, stepFromClick, realHref, openStand, withOpenCaught } from "../src/lib/recorder/tool.js";
 import { newDraft, addClick } from "../src/lib/recorder/steps.js";
 
 const isOurs = (node) => !!(node && node.closest && node.closest("[data-pz]"));
@@ -92,6 +92,27 @@ describe("opening a tab from a replayed click", () => {
     blank.location = "https://viewer.example/doc/3";
     blank.location.replace("https://viewer.example/doc/4");
     expect(opened.slice(1)).toEqual(["https://viewer.example/doc/2", "https://viewer.example/doc/3", "https://viewer.example/doc/4"]);
+  });
+});
+
+describe("window.open during a replayed click", () => {
+  it("is sent to the manager's tab opener while the click runs, then given back", () => {
+    vi.useFakeTimers();
+    try {
+      const original = () => "the page's own";
+      const page = { open: original };
+      const opened = [];
+      withOpenCaught(page, (url) => { opened.push(url); return { close() {} }; }, "https://www.cibse.org/item/1", () => {
+        const tab = page.open("https://cibseorg.sharepoint.com/doc/1", "_blank");
+        tab.focus();
+      });
+      expect(opened).toEqual(["https://cibseorg.sharepoint.com/doc/1"]);
+      expect(page.open).not.toBe(original);
+      vi.advanceTimersByTime(1000);
+      expect(page.open).toBe(original);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

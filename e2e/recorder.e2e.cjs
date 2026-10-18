@@ -61,7 +61,11 @@ async function main() {
   const { chromium } = require(PLAYWRIGHT);
   const server = await site.start();
   const A = `http://127.0.0.1:${server.port}`;
-  const browser = await chromium.launch({ executablePath: findChromium(), headless: !process.env.HEADED });
+  // Playwright turns the popup blocker off by default; Brave keeps it on, and
+  // it stops a window.open made from a script's click.
+  const browser = await chromium.launch({
+    executablePath: findChromium(), headless: !process.env.HEADED, ignoreDefaultArgs: ["--disable-popup-blocking"],
+  });
   const context = await browser.newContext({ acceptDownloads: true });
   const store = new Map();
   const downloads = [];
@@ -102,40 +106,47 @@ async function main() {
     await wait(300);
     check(live().mode === "recording", "Record starts a recording");
 
-    // Item 1 by hand.
+    // Item 1 by hand, as on CIBSE: Access Now, Download, Yes I agree (the
+    // viewer opens in a new tab), Download in the viewer, close it, Back To
+    // All Knowledge Items. A person waits for the page; so does the test.
     await home.locator("article.card").nth(0).locator("a.access").click();
     await home.waitForURL(/\/item\/1$/);
+    await home.waitForLoadState("load");
     await wait(600);
-    const [viewer] = await Promise.all([context.waitForEvent("page"), home.locator("a.read").click()]);
+    await home.locator("aside a.knowledge-purchase-cta__btn-purchase").click();
+    await home.waitForSelector("#download-modal.show");
+    const [viewer] = await Promise.all([context.waitForEvent("page"), home.locator(".btn-cta-confirm").click()]);
     await viewer.waitForSelector('button[aria-label="Download"]');
     await wait(500);
     await Promise.all([viewer.waitForEvent("download"), viewer.locator('button[aria-label="Download"]').click()]);
     await wait(800);
     await viewer.close();
     await home.bringToFront();
-    await home.goBack();
+    await home.locator("a.subpage-hero-banner__btn-back").click();
     await home.waitForURL(/\/list\?page=1$/);
     await wait(1200);
-    check(live().draft && live().draft.steps.map((step) => step.kind).join(",") === "click,click,click,back", "the recording holds Access Now, Read online, Download, Back");
+    check(live().draft && live().draft.steps.map((step) => step.target && step.target.text).join(",") === "Access Now,Download,Yes, I agree,Download,Back To All Knowledge Items",
+      "the recording holds Access Now, Download, Yes I agree, Download, Back To All");
     await act(home, "rec-record").click();
     await wait(600);
     check(live().mode === "idle", "Stop recording ends it");
-    check(await home.locator('[data-act="rec-step"]').count() === 6, "the panel lists 6 steps");
+    check(await home.locator('[data-act="rec-step"]').count() === 7, "the panel lists 7 steps");
     check(Object.values(ledger().rows).some((row) => row.status === "done" && row.note === "done by hand"), "item 1 is marked done by hand");
 
-    // A check before Read online, and a shorter wait.
-    await act(home, "rec-step", 1).click();
-    await act(home, "rec-check-text").fill("Buy now");
-    await act(home, "rec-add-check").click();
-    await wait(600);
-    check(await home.locator('[data-act="rec-step"]').count() === 7, "the check is added");
+    // As his recording: nothing between the item click and Download, so the
+    // run meets each item page as it loads. Item 5 is left out by the list
+    // filter; the wait is shortened.
+    await act(home, "rec-skip").fill("Code M");
+    await act(home, "rec-skip").dispatchEvent("change");
     const box = act(home, "rec-wait-seconds", 4);
     await box.fill("2");
     await box.dispatchEvent("change");
     await wait(600);
     const rec = JSON.parse(store.get("pz-rec recording " + A));
-    check(rec.steps.map((step) => step.kind).join(",") === "click,check,click,click,wait,close,back", "the steps read click, check, click, click, wait, close, back");
+    check(rec.steps.map((step) => step.kind).join(",") === "click,click,click,click,wait,close,click", "the steps read click, click, click, click, wait, close, click");
+    check(rec.steps[2].opens === true, '"Yes, I agree" is known to open a tab');
     check(rec.steps[4].seconds === 2, "the wait is 2 s");
+    check(rec.skipText === "Code M", "items with Code M are skipped");
     await act(home, "rec-timeout").fill("5");
     await act(home, "rec-timeout").dispatchEvent("change");
     await wait(600);
@@ -161,8 +172,7 @@ async function main() {
     check(rows.filter((row) => row.status === "done").length === 4, "the ledger holds 4 done");
     const failed = rows.filter((row) => row.status === "failed");
     check(failed.length === 1 && /TM65/.test(failed[0].title) && failed[0].note === 'step 4: "Download" not found in 5 s', "item 6 fails: its viewer went to a login page");
-    const skipped = rows.filter((row) => row.status === "skipped");
-    check(skipped.length === 1 && /Code M/.test(skipped[0].title) && skipped[0].note === 'page says "Buy now"', "item 5 is skipped because its page says Buy now");
+    check(!rows.some((row) => /Code M/.test(row.title)), "item 5 was left alone by the filter");
     check(context.pages().length === 1, "every viewer tab is closed, the login tab too");
     check(/\/list\?page=2$/.test(home.url()), "the home tab is on list page 2");
     console.log("recorder e2e: PASS");

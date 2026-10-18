@@ -12,7 +12,7 @@ import { newDraft, addClick, addBack, finishRecording, removeStep, insertWait, s
 import {
   startRun, currentTask, whoActs, rowPicked, bindTab, advance, rowEnded, listArrived, startTurning, turnStarted,
   pageTurned, resumed, timedOut, failNote, sameList, stopRun, tokenPlan, overdue,
-  adoptToken, beatFresh, tooManyFailures, navigated, FAIL_STREAK_LIMIT, NAVIGATION_LIMIT,
+  adoptToken, beatFresh, tooManyFailures, navigated, pageSettled, FAIL_STREAK_LIMIT, NAVIGATION_LIMIT,
 } from "./engine.js";
 import { describeStepTarget, refineWords, rowsFor, rowOf, findInRow, findOnPage, parseWords, wantedRows, pageHasWords } from "./targets.js";
 import { highlightWords, clearHighlights, MARK, SKIP } from "./highlight.js";
@@ -87,6 +87,17 @@ export function openStand(openTab, base) {
     Object.defineProperty(stub, "location", { get: () => location, set: go });
     return stub;
   };
+}
+
+// Runs work with the page's window.open sent to openTab, and gives the
+// page its own back a second later (a site's handler may open late).
+export function withOpenCaught(pageWindow, openTab, base, work) {
+  const original = pageWindow.open;
+  const stand = openStand(openTab, base);
+  try { pageWindow.open = stand; } catch { /* left as it is */ }
+  try { work(); } finally {
+    setTimeout(() => { try { if (pageWindow.open === stand) pageWindow.open = original; } catch { /* nothing */ } }, 1000);
+  }
 }
 
 // One recorded click from the element clicked. The first must be on an item
@@ -184,6 +195,13 @@ export function createRecorderTool({ gm, pageWindow = window, version = "0.0.0",
   let ticking = false;
   let busy = false;
   let lastChange = Date.now();
+  let completeAt = 0;
+
+  // Whether this page is ready to be clicked (engine.js pageSettled).
+  function settledNow(now) {
+    if (!completeAt && doc.readyState === "complete") completeAt = now;
+    return pageSettled({ readyState: doc.readyState, now, lastChange, completeAt });
+  }
   let quietWatch = null;
   let highlightAt = 0;
   let highlightKey = "";
@@ -360,20 +378,19 @@ export function createRecorderTool({ gm, pageWindow = window, version = "0.0.0",
   }
 
   // A tab opened from a script's click is stopped by the popup blocker, so
-  // a link goes through the manager's own tab opener, and a page's own
-  // window.open is caught for a moment and sent the same way.
+  // a link known to open a tab goes through the manager's own tab opener,
+  // and on every click the page's own window.open is caught for a moment
+  // and sent the same way: CIBSE's "Yes, I agree" opens its file with
+  // window.open, whether or not the recording went on into that tab.
   function press(el, step) {
-    if (!step.opens) { fire(el); return; }
-    let link = null;
-    try { link = el.closest("a[href]"); } catch { link = null; }
-    const href = realHref(link, win.location.href);
-    if (href) { keepHandle(gm.openTab(href)); return; }
-    const original = pageWindow.open;
-    const stand = openStand((url) => keepHandle(gm.openTab(url)), win.location.href);
-    try { pageWindow.open = stand; } catch { /* left as it is */ }
-    try { fire(el); } finally {
-      setTimeout(() => { try { if (pageWindow.open === stand) pageWindow.open = original; } catch { /* nothing */ } }, 1000);
+    if (step.opens) {
+      let link = null;
+      try { link = el.closest("a[href]"); } catch { link = null; }
+      const href = realHref(link, win.location.href);
+      if (href) { keepHandle(gm.openTab(href)); return; }
     }
+    withOpenCaught(pageWindow, (url) => { const handle = gm.openTab(url); keepHandle(handle); return handle; },
+      win.location.href, () => fire(el));
   }
 
   function comeForward() {
@@ -425,6 +442,7 @@ export function createRecorderTool({ gm, pageWindow = window, version = "0.0.0",
 
     if (task.type === "turn-page") {
       if (rec.pages > 0 && run.page >= rec.pages) { await finish(live, `Stopped after ${run.page} page(s).`); return; }
+      if (!settledNow(now)) return;
       const rows = rowsHere(rec);
       const last = rows.length ? rows[rows.length - 1].node : null;
       const found = findNextControls(doc, last, { isOurs, onScreen, win });
@@ -452,7 +470,7 @@ export function createRecorderTool({ gm, pageWindow = window, version = "0.0.0",
     const ready = who.bind ? bindTab(run, step.tab, mine.token) : run;
     if (who.skip) { await moveOn(live, ready, rec, ledger, mine); return; }
     if (step.kind === "click") {
-      const el = locate(step, task.index, ready, rec);
+      const el = settledNow(now) ? locate(step, task.index, ready, rec) : null;
       if (!el) {
         if (timedOut(ready, rec, now, task)) await endRow(live, ready, rec, ledger, "failed", failNote(task, rec));
         return;
@@ -869,6 +887,7 @@ export function createRecorderTool({ gm, pageWindow = window, version = "0.0.0",
     if (!event || !event.persisted) return;
     visit = newId();
     startedAt = Date.now();
+    completeAt = startedAt;
     holdUntil = 0;
     navigatedAt = 0;
     if (readToken() && liveCache.mode === "recording") noteBack().catch(() => {});

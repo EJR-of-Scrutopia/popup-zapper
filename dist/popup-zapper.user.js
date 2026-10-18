@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Popup Zapper
 // @namespace    https://github.com/EJR-of-Scrutopia/popup-zapper
-// @version      2.3.0
+// @version      2.3.1
 // @description  Remove login/consent/newsletter/paywall popups, reveal blurred/gated content, defeat reload traps, learn popups by click, click many checkboxes or buttons in batches, and record one item's clicks to repeat for every item in a list.
 // @author       Param
 // @homepageURL  https://github.com/EJR-of-Scrutopia/popup-zapper
@@ -5895,6 +5895,12 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     const extra = task.step.kind === "wait" ? Number(task.step.seconds) || 0 : 0;
     return now - run.since > (extra + (rec.timeout || 30) + 5) * 1e3;
   }
+  var SETTLE_QUIET_MS = 500;
+  var SETTLE_CAP_MS = 3e3;
+  function pageSettled({ readyState, now, lastChange, completeAt }) {
+    if (readyState !== "complete") return false;
+    return now - lastChange >= SETTLE_QUIET_MS || now - completeAt >= SETTLE_CAP_MS;
+  }
   function failNote(task, rec) {
     const target = task.step && task.step.target;
     if (!target) return `step ${task.index + 1}: ${task.step.kind} did not finish in ${rec.timeout || 30} s`;
@@ -6428,6 +6434,24 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       return stub;
     };
   }
+  function withOpenCaught(pageWindow2, openTab, base, work) {
+    const original = pageWindow2.open;
+    const stand = openStand(openTab, base);
+    try {
+      pageWindow2.open = stand;
+    } catch {
+    }
+    try {
+      work();
+    } finally {
+      setTimeout(() => {
+        try {
+          if (pageWindow2.open === stand) pageWindow2.open = original;
+        } catch {
+        }
+      }, 1e3);
+    }
+  }
   function stepFromClick(node, me, draft, { doc = document, isOurs = () => false, rowNode = null } = {}) {
     const found = resolveTarget(node);
     if (!found) return { problem: "Nothing there to record." };
@@ -6529,6 +6553,11 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     let ticking = false;
     let busy = false;
     let lastChange = Date.now();
+    let completeAt = 0;
+    function settledNow(now) {
+      if (!completeAt && doc.readyState === "complete") completeAt = now;
+      return pageSettled({ readyState: doc.readyState, now, lastChange, completeAt });
+    }
     let quietWatch = null;
     let highlightAt = 0;
     let highlightKey = "";
@@ -6710,37 +6739,29 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       el.click();
     }
     function press(el, step) {
-      if (!step.opens) {
-        fire(el);
-        return;
+      if (step.opens) {
+        let link = null;
+        try {
+          link = el.closest("a[href]");
+        } catch {
+          link = null;
+        }
+        const href = realHref(link, win.location.href);
+        if (href) {
+          keepHandle(gm2.openTab(href));
+          return;
+        }
       }
-      let link = null;
-      try {
-        link = el.closest("a[href]");
-      } catch {
-        link = null;
-      }
-      const href = realHref(link, win.location.href);
-      if (href) {
-        keepHandle(gm2.openTab(href));
-        return;
-      }
-      const original = pageWindow2.open;
-      const stand = openStand((url) => keepHandle(gm2.openTab(url)), win.location.href);
-      try {
-        pageWindow2.open = stand;
-      } catch {
-      }
-      try {
-        fire(el);
-      } finally {
-        setTimeout(() => {
-          try {
-            if (pageWindow2.open === stand) pageWindow2.open = original;
-          } catch {
-          }
-        }, 1e3);
-      }
+      withOpenCaught(
+        pageWindow2,
+        (url) => {
+          const handle = gm2.openTab(url);
+          keepHandle(handle);
+          return handle;
+        },
+        win.location.href,
+        () => fire(el)
+      );
     }
     function comeForward() {
       try {
@@ -6795,6 +6816,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
           await finish(live, `Stopped after ${run2.page} page(s).`);
           return;
         }
+        if (!settledNow(now)) return;
         const rows = rowsHere(rec);
         const last = rows.length ? rows[rows.length - 1].node : null;
         const found = findNextControls(doc, last, { isOurs, onScreen: onScreen2, win });
@@ -6825,7 +6847,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
         return;
       }
       if (step.kind === "click") {
-        const el = locate(step, task.index, ready, rec);
+        const el = settledNow(now) ? locate(step, task.index, ready, rec) : null;
         if (!el) {
           if (timedOut(ready, rec, now, task)) await endRow(live, ready, rec, ledger, "failed", failNote(task, rec));
           return;
@@ -7281,6 +7303,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       if (!event || !event.persisted) return;
       visit = newId();
       startedAt = Date.now();
+      completeAt = startedAt;
       holdUntil = 0;
       navigatedAt = 0;
       if (readToken() && liveCache.mode === "recording") noteBack().catch(() => {

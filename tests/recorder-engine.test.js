@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   startRun, currentTask, whoActs, rowPicked, bindTab, advance, rowEnded, startTurning, turnStarted,
   pageTurned, listArrived, resumed, timedOut, failNote, sameList, stopRun, tokenPlan, overdue,
-  adoptToken, beatFresh, tooManyFailures, navigated,
+  adoptToken, beatFresh, tooManyFailures, navigated, pageSettled,
 } from "../src/lib/recorder/engine.js";
 
 const A = "https://www.cibse.org";
@@ -210,6 +210,19 @@ describe("runs that go wrong", () => {
     expect(run.navigations).toBe(2);
     expect(listArrived(run, 3).navigations).toBe(0);
     expect(rowPicked(run, row, 3).navigations).toBe(0);
+  });
+});
+
+describe("a page ready to be clicked", () => {
+  it("waits until the page has loaded and its scripts have stopped changing it", () => {
+    expect(pageSettled({ readyState: "interactive", now: 9000, lastChange: 0, completeAt: 0 })).toBe(false);
+    expect(pageSettled({ readyState: "complete", now: 1400, lastChange: 1000, completeAt: 1000 })).toBe(false);
+    expect(pageSettled({ readyState: "complete", now: 1500, lastChange: 1000, completeAt: 1000 })).toBe(true);
+  });
+
+  it("goes ahead 3 s after loading on a page that never stops moving", () => {
+    expect(pageSettled({ readyState: "complete", now: 3999, lastChange: 3990, completeAt: 1000 })).toBe(false);
+    expect(pageSettled({ readyState: "complete", now: 4000, lastChange: 3990, completeAt: 1000 })).toBe(true);
   });
 });
 
