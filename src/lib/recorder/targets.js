@@ -111,6 +111,31 @@ export function findOnPage(doc, target, { isOurs = () => false, onScreen = () =>
   return all.find((node) => matchesTarget(node, target)) || null;
 }
 
+// Whether the page shows some words: its visible text, read across
+// elements, never our own panel (which names the very words checked for)
+// nor scripts and styles.
+export function pageHasWords(doc, words, { isOurs = () => false, onScreen = () => true } = {}) {
+  const wanted = normaliseText(words);
+  if (!wanted || !doc || !doc.body) return false;
+  const win = doc.defaultView;
+  const filter = win.NodeFilter;
+  const seen = new Map();
+  const shows = (element) => {
+    if (!seen.has(element)) {
+      let ok = false;
+      try { ok = !/^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|TEXTAREA)$/.test(element.nodeName) && !isOurs(element) && onScreen(element); } catch { ok = false; }
+      seen.set(element, ok);
+    }
+    return seen.get(element);
+  };
+  const walker = doc.createTreeWalker(doc.body, filter.SHOW_TEXT, {
+    acceptNode: (node) => (node.parentElement && shows(node.parentElement) ? filter.FILTER_ACCEPT : filter.FILTER_REJECT),
+  });
+  const parts = [];
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) parts.push(node.nodeValue);
+  return normaliseText(parts.join(" ")).indexOf(wanted) >= 0;
+}
+
 export function parseWords(text) {
   return String(text == null ? "" : text).split(/[,\r\n]+/).map((word) => word.trim().toLowerCase()).filter(Boolean);
 }

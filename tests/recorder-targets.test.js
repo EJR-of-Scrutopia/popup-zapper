@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
-  describeStepTarget, refineWords, rowsFor, rowOf, findInRow, findOnPage, parseWords, rowFilter, wantedRows,
+  describeStepTarget, refineWords, rowsFor, rowOf, findInRow, findOnPage, parseWords, rowFilter, wantedRows, pageHasWords,
 } from "../src/lib/recorder/targets.js";
 import { resolveTarget } from "../src/lib/batch/target.js";
 
@@ -100,6 +100,24 @@ describe("a target on another page", () => {
     buttons[1].textContent = "Buy";
     buttons[2].textContent = "Sold out";
     expect(refineWords(target, buttons).words).toBe("");
+  });
+});
+
+describe("what the page says", () => {
+  it("finds words the page shows, across elements", () => {
+    document.body.innerHTML = "<p>Members only: <b>Buy</b> now</p>";
+    expect(pageHasWords(document, "buy now", visible)).toBe(true);
+  });
+
+  it("never reads the recorder's own panel, which names the words it checks for", () => {
+    document.body.innerHTML = `<p>Read online</p><div data-pz="recorder"><span>Skip the item if the page says "Buy now"</span></div>`;
+    expect(pageHasWords(document, "Buy now", visible)).toBe(false);
+  });
+
+  it("leaves out hidden text and scripts", () => {
+    document.body.innerHTML = `<p class="gone">Buy now</p><script>var buy = "Buy now";</script><p>Read online</p>`;
+    const shown = { isOurs, onScreen: (node) => !node.classList.contains("gone") };
+    expect(pageHasWords(document, "buy now", shown)).toBe(false);
   });
 });
 

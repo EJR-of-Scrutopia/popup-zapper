@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   startRun, currentTask, whoActs, rowPicked, bindTab, advance, rowEnded, startTurning, turnStarted,
-  pageTurned, listArrived, resumed, timedOut, failNote, sameList, stopRun,
+  pageTurned, listArrived, resumed, timedOut, failNote, sameList, stopRun, tokenPlan, overdue,
 } from "../src/lib/recorder/engine.js";
 
 const A = "https://www.cibse.org";
@@ -124,7 +124,49 @@ describe("moving on", () => {
   });
 });
 
+describe("which pages take part", () => {
+  const running = (since) => ({ mode: "running", closing: [], note: "", run: Object.assign(inSteps(2), { since }) });
+  const facts = (extra) => Object.assign({ token: null, cloned: false, adopted: null, historyLength: 1, startedAt: 0, now: 0 }, extra);
+
+  it("keeps a tab's own token, but not one copied from the tab that opened it", () => {
+    expect(tokenPlan(running(0), facts({ token: "t" }))).toBe("keep");
+    expect(tokenPlan(running(0), facts({ token: "t", cloned: true, historyLength: 1 }))).toBe("new");
+  });
+
+  it("takes a token the same tab let go of on another site", () => {
+    expect(tokenPlan(running(0), facts({ adopted: "t", historyLength: 3 }))).toBe("adopt");
+  });
+
+  it("joins a run as a new tab when it opened after the step began, whatever its history", () => {
+    expect(tokenPlan(running(5000), facts({ historyLength: 2, startedAt: 5300, now: 5300 }))).toBe("new");
+    expect(tokenPlan(running(5000), facts({ historyLength: 2, startedAt: 2000, now: 5300 }))).toBe("none");
+    expect(tokenPlan(running(5000), facts({ historyLength: 1, startedAt: 2000, now: 5300 }))).toBe("new");
+  });
+
+  it("joins a recording when it opened within 15 s of the last recorded step", () => {
+    const live = { mode: "recording", closing: [], note: "", draft: { steps: [{}], lastAt: 10000 } };
+    expect(tokenPlan(live, facts({ historyLength: 2, now: 20000 }))).toBe("new");
+    expect(tokenPlan(live, facts({ historyLength: 2, now: 30001 }))).toBe("none");
+  });
+
+  it("leaves every page alone while idle", () => {
+    expect(tokenPlan({ mode: "idle", closing: [], note: "" }, facts({ historyLength: 1 }))).toBe("none");
+  });
+});
+
 describe("time limits and notes", () => {
+  it("lets the home tab end a step nobody took, 5 s after its timeout", () => {
+    const run = inSteps(2, { since: 0 });
+    const task = currentTask(run, rec);
+    expect(overdue(run, rec, 35000, task)).toBe(false);
+    expect(overdue(run, rec, 35001, task)).toBe(true);
+    expect(overdue(run, rec, 99999, { type: "pick-row" })).toBe(false);
+    const waiting = inSteps(3, { since: 0 });
+    expect(overdue(waiting, rec, 40000, currentTask(waiting, rec))).toBe(false);
+    expect(overdue(waiting, rec, 40001, currentTask(waiting, rec))).toBe(true);
+    expect(failNote(currentTask(waiting, rec), rec)).toBe("step 4: wait did not finish in 30 s");
+  });
+
   it("fails a step after the recording's timeout", () => {
     const run = inSteps(2, { since: 0 });
     const task = currentTask(run, rec);

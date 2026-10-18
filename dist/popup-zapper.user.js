@@ -5872,10 +5872,28 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     else if (task.type === "await-page") limit = PAGE_WAIT_MS;
     return now - run.since > limit;
   }
+  function overdue(run, rec, now, task) {
+    if (task.type !== "step") return false;
+    const extra = task.step.kind === "wait" ? Number(task.step.seconds) || 0 : 0;
+    return now - run.since > (extra + (rec.timeout || 30) + 5) * 1e3;
+  }
   function failNote(task, rec) {
     const target = task.step && task.step.target;
-    const words = target ? target.text || target.words || target.tag : task.step.kind;
-    return `step ${task.index + 1}: "${words}" not found in ${rec.timeout || 30} s`;
+    if (!target) return `step ${task.index + 1}: ${task.step.kind} did not finish in ${rec.timeout || 30} s`;
+    return `step ${task.index + 1}: "${target.text || target.words || target.tag}" not found in ${rec.timeout || 30} s`;
+  }
+  function tokenPlan(live, { token, cloned, adopted, historyLength, startedAt, now }) {
+    if (token && !cloned) return "keep";
+    if (adopted) return "adopt";
+    if (live.mode === "running" && live.run) {
+      if (historyLength === 1 || startedAt >= live.run.since - FRESH_SLACK_MS) return "new";
+      return "none";
+    }
+    if (live.mode === "recording" && live.draft) {
+      if (historyLength === 1 || now - (live.draft.lastAt || 0) < 15e3) return "new";
+      return "none";
+    }
+    return "none";
   }
   function listKey(href) {
     const url = new URL(String(href));
@@ -5991,6 +6009,31 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       return best;
     }
     return all.find((node) => matchesTarget(node, target)) || null;
+  }
+  function pageHasWords(doc, words, { isOurs = () => false, onScreen: onScreen3 = () => true } = {}) {
+    const wanted = normaliseText(words);
+    if (!wanted || !doc || !doc.body) return false;
+    const win = doc.defaultView;
+    const filter = win.NodeFilter;
+    const seen = /* @__PURE__ */ new Map();
+    const shows = (element) => {
+      if (!seen.has(element)) {
+        let ok = false;
+        try {
+          ok = !/^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|TEXTAREA)$/.test(element.nodeName) && !isOurs(element) && onScreen3(element);
+        } catch {
+          ok = false;
+        }
+        seen.set(element, ok);
+      }
+      return seen.get(element);
+    };
+    const walker = doc.createTreeWalker(doc.body, filter.SHOW_TEXT, {
+      acceptNode: (node) => node.parentElement && shows(node.parentElement) ? filter.FILTER_ACCEPT : filter.FILTER_REJECT
+    });
+    const parts = [];
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) parts.push(node.nodeValue);
+    return normaliseText(parts.join(" ")).indexOf(wanted) >= 0;
   }
   function parseWords(text) {
     return String(text == null ? "" : text).split(/[,\r\n]+/).map((word) => word.trim().toLowerCase()).filter(Boolean);
@@ -6610,15 +6653,6 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
         }, 1e3);
       }
     }
-    function pageSays(text) {
-      let all = "";
-      try {
-        all = String(doc.body && (doc.body.innerText || doc.body.textContent) || "");
-      } catch {
-        all = "";
-      }
-      return all.toLowerCase().indexOf(String(text).toLowerCase()) >= 0;
-    }
     function comeForward() {
       try {
         if (doc.hidden) win.focus();
@@ -6632,7 +6666,10 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       const mine = me(now);
       const task = currentTask(run2, rec);
       const who = whoActs(run2, rec, mine, task);
-      if (!who.mine) return;
+      if (!who.mine) {
+        if (mine.token === run2.home && overdue(run2, rec, now, task)) await endRow(live, run2, rec, ledger, "failed", failNote(task, rec));
+        return;
+      }
       if (mine.token === run2.home) comeForward();
       if (task.type === "pick-row") {
         if (!sameList(win.location.href, run2.listUrl)) {
@@ -6708,7 +6745,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
         return;
       }
       if (step.kind === "check") {
-        if (pageSays(step.text)) {
+        if (pageHasWords(doc, step.text, { isOurs, onScreen: onScreen2 })) {
           await endRow(live, ready, rec, ledger, "skipped", `page says "${step.text}"`);
           return;
         }
@@ -6830,7 +6867,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
           return;
         }
         if (out.rowNode) recRowNode = out.rowNode;
-        const draft = addClick(live.draft, out.click);
+        const draft = Object.assign(addClick(live.draft, out.click), { lastAt: Date.now() });
         const next = Object.assign({}, live, { draft, rev: (live.rev || 0) + 1 });
         liveCache = next;
         store.writeLiveNow(next);
@@ -6854,19 +6891,21 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       const live = store.readLiveNow() || await store.readLive();
       if (live.mode !== "recording" || !live.draft) return;
       const mine = me();
-      const draft = addBack(live.draft, { tab: mine.token, origin: mine.origin, visit: mine.visit });
-      if (draft === live.draft) return;
+      const backed = addBack(live.draft, { tab: mine.token, origin: mine.origin, visit: mine.visit });
+      if (backed === live.draft) return;
+      const draft = Object.assign(backed, { lastAt: Date.now() });
       await writeFresh(Object.assign({}, live, { draft }));
       say("Recorded: Go back");
     }
-    function cameBack() {
+    function navType() {
       try {
         const entry = win.performance.getEntriesByType("navigation")[0];
-        return !!entry && entry.type === "back_forward";
+        return entry ? String(entry.type) : "";
       } catch {
-        return false;
+        return "";
       }
     }
+    const cameBack = () => navType() === "back_forward";
     async function record() {
       const live = await store.readLive();
       if (live.mode === "running" || live.mode === "paused") {
@@ -6884,7 +6923,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
         mode: "recording",
         closing: live.closing,
         note: "",
-        draft: newDraft({ origin: win.location.origin, listUrl: win.location.href, homeTab: token, visit })
+        draft: Object.assign(newDraft({ origin: win.location.origin, listUrl: win.location.href, homeTab: token, visit }), { lastAt: Date.now() })
       });
       listenForClicks();
       startLoop();
@@ -7097,18 +7136,30 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     async function resume() {
       const live = await store.readLive();
       liveCache = live;
-      let token = readToken();
+      const token = readToken();
       if (token && live.closing.indexOf(token) >= 0) {
         closeSelf();
         return true;
       }
       if (live.mode === "idle") return false;
-      if (!token) {
-        const adopted = await adoptable(live);
-        if (adopted) token = keepToken(adopted);
-        else if (win.history.length === 1) token = keepToken(newId());
-        else return false;
+      let opener = false;
+      try {
+        opener = !!win.opener;
+      } catch {
+        opener = true;
       }
+      const cloned = !!token && win.history.length === 1 && opener && navType() === "navigate";
+      const plan = tokenPlan(live, {
+        token,
+        cloned,
+        adopted: !token || cloned ? await adoptable(live) : null,
+        historyLength: win.history.length,
+        startedAt,
+        now: Date.now()
+      });
+      if (plan === "none") return false;
+      if (plan === "adopt") keepToken((await store.readLeaving()).token);
+      if (plan === "new") keepToken(newId());
       if (live.mode === "recording") {
         listenForClicks();
         if (cameBack()) await noteBack();

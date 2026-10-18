@@ -132,10 +132,36 @@ export function timedOut(run, rec, now, task) {
   return now - run.since > limit;
 }
 
+// A step nobody finished (its tab never opened, or was closed by hand) is
+// ended by the home tab 5 s after the page doing it would have given up.
+export function overdue(run, rec, now, task) {
+  if (task.type !== "step") return false;
+  const extra = task.step.kind === "wait" ? Number(task.step.seconds) || 0 : 0;
+  return now - run.since > (extra + (rec.timeout || 30) + 5) * 1000;
+}
+
 export function failNote(task, rec) {
   const target = task.step && task.step.target;
-  const words = target ? target.text || target.words || target.tag : task.step.kind;
-  return `step ${task.index + 1}: "${words}" not found in ${rec.timeout || 30} s`;
+  if (!target) return `step ${task.index + 1}: ${task.step.kind} did not finish in ${rec.timeout || 30} s`;
+  return `step ${task.index + 1}: "${target.text || target.words || target.tag}" not found in ${rec.timeout || 30} s`;
+}
+
+// Whether a page takes part, at load: it keeps its own tab token (unless the
+// token was copied from the tab that opened it), takes one its tab let go of
+// on another site, or joins as a new tab when it opened during a run's step
+// or soon after a recorded step.
+export function tokenPlan(live, { token, cloned, adopted, historyLength, startedAt, now }) {
+  if (token && !cloned) return "keep";
+  if (adopted) return "adopt";
+  if (live.mode === "running" && live.run) {
+    if (historyLength === 1 || startedAt >= live.run.since - FRESH_SLACK_MS) return "new";
+    return "none";
+  }
+  if (live.mode === "recording" && live.draft) {
+    if (historyLength === 1 || now - (live.draft.lastAt || 0) < 15000) return "new";
+    return "none";
+  }
+  return "none";
 }
 
 function listKey(href) {

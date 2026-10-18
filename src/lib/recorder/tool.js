@@ -11,9 +11,9 @@ import { createRecorderStore, markRow, ledgerTally, forgetFailed, ledgerLines } 
 import { newDraft, addClick, addBack, finishRecording, removeStep, insertWait, setWait, insertCheck, describeStep } from "./steps.js";
 import {
   startRun, currentTask, whoActs, rowPicked, bindTab, advance, rowEnded, listArrived, startTurning, turnStarted,
-  pageTurned, resumed, timedOut, failNote, sameList, stopRun,
+  pageTurned, resumed, timedOut, failNote, sameList, stopRun, tokenPlan, overdue,
 } from "./engine.js";
-import { describeStepTarget, refineWords, rowsFor, rowOf, findInRow, findOnPage, parseWords, wantedRows } from "./targets.js";
+import { describeStepTarget, refineWords, rowsFor, rowOf, findInRow, findOnPage, parseWords, wantedRows, pageHasWords } from "./targets.js";
 import { highlightWords, clearHighlights, MARK, SKIP } from "./highlight.js";
 import { createRecorderPanel } from "./panel.js";
 import { resolveTarget } from "../batch/target.js";
@@ -312,12 +312,6 @@ export function createRecorderTool({ gm, pageWindow = window, version = "0.0.0",
     }
   }
 
-  function pageSays(text) {
-    let all = "";
-    try { all = String((doc.body && (doc.body.innerText || doc.body.textContent)) || ""); } catch { all = ""; }
-    return all.toLowerCase().indexOf(String(text).toLowerCase()) >= 0;
-  }
-
   function comeForward() {
     try { if (doc.hidden) win.focus(); } catch { /* the manager may not allow it */ }
   }
@@ -329,7 +323,11 @@ export function createRecorderTool({ gm, pageWindow = window, version = "0.0.0",
     const mine = me(now);
     const task = currentTask(run, rec);
     const who = whoActs(run, rec, mine, task);
-    if (!who.mine) return;
+    if (!who.mine) {
+      // A step nobody is doing (its tab never opened, or was closed by hand).
+      if (mine.token === run.home && overdue(run, rec, now, task)) await endRow(live, run, rec, ledger, "failed", failNote(task, rec));
+      return;
+    }
     if (mine.token === run.home) comeForward();
 
     if (task.type === "pick-row") {
@@ -399,7 +397,7 @@ export function createRecorderTool({ gm, pageWindow = window, version = "0.0.0",
       return;
     }
     if (step.kind === "check") {
-      if (pageSays(step.text)) { await endRow(live, ready, rec, ledger, "skipped", `page says "${step.text}"`); return; }
+      if (pageHasWords(doc, step.text, { isOurs, onScreen })) { await endRow(live, ready, rec, ledger, "skipped", `page says "${step.text}"`); return; }
       const settled = doc.readyState === "complete" && now - lastChange >= 1000 && now - ready.since >= 1000;
       if (settled || timedOut(ready, rec, now, task)) await moveOn(live, ready, rec, ledger, mine);
       return;
@@ -525,7 +523,7 @@ export function createRecorderTool({ gm, pageWindow = window, version = "0.0.0",
       if (out.ignored) return;
       if (out.problem) { say(out.problem); return; }
       if (out.rowNode) recRowNode = out.rowNode;
-      const draft = addClick(live.draft, out.click);
+      const draft = Object.assign(addClick(live.draft, out.click), { lastAt: Date.now() });
       const next = Object.assign({}, live, { draft, rev: (live.rev || 0) + 1 });
       liveCache = next;
       store.writeLiveNow(next);
@@ -552,18 +550,21 @@ export function createRecorderTool({ gm, pageWindow = window, version = "0.0.0",
     const live = store.readLiveNow() || await store.readLive();
     if (live.mode !== "recording" || !live.draft) return;
     const mine = me();
-    const draft = addBack(live.draft, { tab: mine.token, origin: mine.origin, visit: mine.visit });
-    if (draft === live.draft) return;
+    const backed = addBack(live.draft, { tab: mine.token, origin: mine.origin, visit: mine.visit });
+    if (backed === live.draft) return;
+    const draft = Object.assign(backed, { lastAt: Date.now() });
     await writeFresh(Object.assign({}, live, { draft }));
     say("Recorded: Go back");
   }
 
-  function cameBack() {
+  function navType() {
     try {
       const entry = win.performance.getEntriesByType("navigation")[0];
-      return !!entry && entry.type === "back_forward";
-    } catch { return false; }
+      return entry ? String(entry.type) : "";
+    } catch { return ""; }
   }
+
+  const cameBack = () => navType() === "back_forward";
 
   async function record() {
     const live = await store.readLive();
@@ -574,7 +575,7 @@ export function createRecorderTool({ gm, pageWindow = window, version = "0.0.0",
     clearRowPaint();
     await writeFresh({
       mode: "recording", closing: live.closing, note: "",
-      draft: newDraft({ origin: win.location.origin, listUrl: win.location.href, homeTab: token, visit }),
+      draft: Object.assign(newDraft({ origin: win.location.origin, listUrl: win.location.href, homeTab: token, visit }), { lastAt: Date.now() }),
     });
     listenForClicks();
     startLoop();
@@ -754,15 +755,21 @@ export function createRecorderTool({ gm, pageWindow = window, version = "0.0.0",
   async function resume() {
     const live = await store.readLive();
     liveCache = live;
-    let token = readToken();
+    const token = readToken();
     if (token && live.closing.indexOf(token) >= 0) { closeSelf(); return true; }
     if (live.mode === "idle") return false;
-    if (!token) {
-      const adopted = await adoptable(live);
-      if (adopted) token = keepToken(adopted);
-      else if (win.history.length === 1) token = keepToken(newId());
-      else return false;
-    }
+    // A tab opened from another with its opener kept starts with a copy of
+    // that tab's sessionStorage, token and all; it is a new tab all the same.
+    let opener = false;
+    try { opener = !!win.opener; } catch { opener = true; }
+    const cloned = !!token && win.history.length === 1 && opener && navType() === "navigate";
+    const plan = tokenPlan(live, {
+      token, cloned, adopted: !token || cloned ? await adoptable(live) : null,
+      historyLength: win.history.length, startedAt, now: Date.now(),
+    });
+    if (plan === "none") return false;
+    if (plan === "adopt") keepToken((await store.readLeaving()).token);
+    if (plan === "new") keepToken(newId());
     if (live.mode === "recording") {
       listenForClicks();
       if (cameBack()) await noteBack();

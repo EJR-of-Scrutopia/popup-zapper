@@ -7,6 +7,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "build": "node build.js",
+    "e2e:recorder": "node e2e/recorder.e2e.cjs",
     "release": "npm version patch -m \"chore(release): v%s\" && npm run build && git add dist/popup-zapper.user.js && git commit -m \"chore: rebuild dist\" && git push --follow-tags"
   },
   "devDependencies": {
