@@ -243,22 +243,32 @@ export function autoSource(doc, isOurs = () => false) {
 
 // The boxes a learned record matches (see target.js). A learned row is the
 // largest element above a box that holds no other match.
-export function learnedSource(doc, record, matches, isOurs = () => false) {
+// `narrow`, where given, keeps those of the matches that are the picked kind
+// by where they sit (variant.js), which only the whole set can tell; the
+// boxes found last are what `within` counts.
+export function learnedSource(doc, record, matches, isOurs = () => false, narrow = (list) => list) {
   const tag = record && record.tag ? record.tag : "*";
   const fits = (el) => !isOurs(el) && matches(el, record);
+  let found = null;
+  const boxes = () => {
+    const list = narrow(Array.from(doc.getElementsByTagName(tag)).filter(fits));
+    found = new Set(list);
+    return list;
+  };
   return {
     learned: true,
-    boxes: () => Array.from(doc.getElementsByTagName(tag)).filter(fits),
+    boxes,
     within: (node, cap = 2) => {
+      if (!found) boxes();
       let n = 0;
       try {
         for (const el of node.getElementsByTagName(tag)) {
-          if (fits(el) && ++n >= cap) break;
+          if (found.has(el) && ++n >= cap) break;
         }
       } catch { return 1; }
       return n;
     },
-    checked() { return this.boxes().filter(isTicked); },
+    checked() { return boxes().filter(isTicked); },
   };
 }
 

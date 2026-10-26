@@ -25,6 +25,7 @@ import {
   isAddText, isInZipText, zipLedgerKey, openZipStore, zipCounts, zipAddedCount, zipSummary,
 } from "./runner.js";
 import { createBatchPanel, makeDraggable } from "./panel.js";
+import { narrowRecord, refineRecord, bySlot } from "./variant.js";
 import { findNextControls } from "./pager.js";
 
 // The mark left on a row once the ledger knows it, and on an item once handled.
@@ -103,7 +104,7 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window, onStep
   function makeReader() {
     learnedHere = !!targetRecord && learnedMatches().length > 0;
     const source = learnedHere && targetRecord.kind === "box"
-      ? learnedSource(document, targetRecord, matchesTarget, isOurs)
+      ? learnedSource(document, targetRecord, matchesTarget, isOurs, (list) => bySlot(list, kindNow()))
       : autoSource(document, isOurs);
     reader = createRowReader(document, { now: () => Date.now(), source });
   }
@@ -111,10 +112,24 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window, onStep
   const liveRows = () => reader.rows();
   const insideRows = (node) => reader.insideRow(node);
 
+  // The kind in force: the picked one's, unless the person chose all alike.
+  function kindNow() {
+    return targetRecord && targetRecord.variantOn !== false ? targetRecord.variant || null : null;
+  }
+
+  // Every look-alike of the picked item, whatever its kind.
+  function lookAlikes(record = targetRecord) {
+    if (!record) return [];
+    const loose = Object.assign({}, record, { variant: null });
+    return Array.from(document.getElementsByTagName(record.tag)).filter((el) => !isOurs(el) && matchesTarget(el, loose));
+  }
+
+  // The look-alikes of the kind in force: these are what a run takes.
   function learnedMatches() {
     if (!targetRecord) return [];
-    return Array.from(document.getElementsByTagName(targetRecord.tag))
+    const matched = Array.from(document.getElementsByTagName(targetRecord.tag))
       .filter((el) => !isOurs(el) && matchesTarget(el, targetRecord));
+    return bySlot(matched, kindNow());
   }
   makeReader();
 
@@ -962,10 +977,11 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window, onStep
 
   function onHover(event) {
     if (!event || isOurs(event.target)) { unhover(); return; }
-    const found = picking === "item" ? resolveTarget(event.target) : null;
+    const found = picking === "item" || picking === "refine" ? resolveTarget(event.target) : null;
     const el = found ? found.node : (event.target && event.target.closest ? event.target.closest(CLICKABLE) || event.target : null);
     if (!el || (hovered && hovered.el === el)) return;
     unhover();
+    // The preview's own outline comes back when the mouse moves on.
     hovered = { el, was: el.style.outline };
     el.style.outline = "2px dashed #ff3b30";
   }
@@ -974,12 +990,37 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window, onStep
     if (disarmPick) { disarmPick(); disarmPick = null; }
     if (picking) document.removeEventListener("mouseover", onHover, true);
     unhover();
+    const refining = picking === "refine";
     picking = null;
     labelPickers();
+    if (refining) showPreview();
+  }
+
+  // What a run will take, outlined green while the panel waits; in Refine the
+  // look-alikes left out are dashed grey, so both can be clicked.
+  const previewed = new Map();
+  function clearPreview() {
+    for (const [node, was] of previewed) { try { node.style.outline = was; } catch { /* gone */ } }
+    previewed.clear();
+  }
+  function mark(node, outline) {
+    if (!previewed.has(node)) previewed.set(node, node.style.outline);
+    node.style.outline = outline;
+  }
+  function showPreview() {
+    clearPreview();
+    if (!opened || !learnedHere || busy()) return;
+    const taken = learnedMatches();
+    for (const node of taken.slice(0, 1000)) mark(node, "2px solid #2e7d32");
+    if (picking === "refine") {
+      const kept = new Set(taken);
+      for (const node of lookAlikes().slice(0, 1000)) if (!kept.has(node)) mark(node, "2px dashed #9e9e9e");
+    }
   }
 
   function labelPickers() {
     if (!view) return;
+    view.setRefine(picking === "refine" ? "✓ Done" : "✎ Refine");
     view.setPickItem(picking === "item" ? "Cancel picking"
       : !targetRecord ? "☐ Pick item"
         : learnedHere ? `☑ Item: ${targetRecord.kind === "box" ? "checkbox" : "button"}` : "☑ Item (not on this page)",
@@ -1001,34 +1042,94 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window, onStep
     return runner.state() !== "idle" || zipRunner.state() !== "idle" || selectingAll;
   }
 
-  // Outline every match for a moment, so the person sees what was learned.
-  function flash(nodes) {
-    const held = nodes.slice(0, 500).map((node) => ({ node, was: node.style.outline }));
-    for (const each of held) each.node.style.outline = "2px solid #2e7d32";
-    setTimeout(() => { for (const each of held) each.node.style.outline = each.was; }, 1600);
-  }
-
   function learnItem(target) {
     const found = resolveTarget(target);
     if (!found) { say("Nothing there to learn."); return; }
-    const record = describeTarget(found.node, found.kind);
+    let record = describeTarget(found.node, found.kind);
     if (!record.chain.length) { say("That can't be found again. Pick something inside the page."); return; }
-    const matches = Array.from(document.getElementsByTagName(record.tag)).filter((el) => !isOurs(el) && matchesTarget(el, record));
-    // Words count only when most matches share them (per-file links differ).
+    const alike = lookAlikes(record);
+    // Words count when another look-alike shares them: per-file links each
+    // read differently, while "PDF" on a third of the icons is the kind.
     if (record.kind === "button" && record.words) {
-      const same = matches.filter((el) => buttonWords(labelOf(el)) === record.words).length;
-      if (same < Math.max(2, Math.ceil(matches.length / 2))) record.words = "";
+      const same = alike.filter((el) => buttonWords(labelOf(el)) === record.words).length;
+      if (same < 2) record.words = "";
     }
+    // Narrowed to the picked one's kind: its icon, label, data or place.
+    record = narrowRecord(record, found.node, alike);
     targetRecord = record;
     const kept = writeTargetRecord(storage, keyFor(targetKey, TARGET_PREFIX + "this site"), record);
     clearRowPaint();
     clearZipPaint();
     makeReader();
     rebuild();
-    flash(matches);
-    say(`Learned: ${matches.length} matching ${record.kind === "box" ? "checkbox(es)" : "button(s)"}.`
+    const taken = learnedMatches().length;
+    say(`Learned: ${taken} ${record.kind === "box" ? "checkbox(es)" : "button(s)"} of this kind`
+      + (alike.length > taken ? ` (${alike.length} look alike).` : ".")
       + (record.link ? " They are plain links, so clicking each may open pages." : "")
       + (kept ? "" : " Storage refused, so it lasts until reload."));
+  }
+
+  function saveTarget() {
+    return writeTargetRecord(storage, keyFor(targetKey, TARGET_PREFIX + "this site"), targetRecord);
+  }
+
+  // This kind only, or every look-alike.
+  function setVariantOn(on) {
+    if (busy()) { say("Stop the run first."); return; }
+    if (!targetRecord) return;
+    targetRecord = Object.assign({}, targetRecord, { variantOn: !!on });
+    saveTarget();
+    clearRowPaint();
+    clearZipPaint();
+    rebuild();
+    say(on ? `Only this kind: ${learnedMatches().length}.` : `Every look-alike: ${learnedMatches().length}.`);
+  }
+
+  // Refine: each click on a green one leaves its kind out, each click on an
+  // unmarked look-alike takes its kind in, until Done.
+  let refineNodes = [];
+  function refineWith(target) {
+    const found = resolveTarget(target);
+    const alike = lookAlikes();
+    if (!found || alike.indexOf(found.node) < 0) {
+      say("That isn't like the picked item. Click a green one, or a grey dashed one.");
+      return;
+    }
+    const wanted = learnedMatches().indexOf(found.node) < 0;
+    const before = learnedMatches().length;
+    if (wanted) refineNodes.push(found.node);
+    targetRecord = refineRecord(Object.assign({}, targetRecord, { variantOn: true }), found.node, wanted, alike, refineNodes);
+    saveTarget();
+    clearRowPaint();
+    clearZipPaint();
+    rebuild();
+    const now = learnedMatches();
+    if (!wanted && now.indexOf(found.node) >= 0) {
+      say("That one can't be told apart from the one you picked, so it stays. Pick item again to start over.");
+    } else {
+      say(`${wanted ? "Taken in" : "Left out"}: now ${now.length} of ${alike.length} (was ${before}). Click more, or Done.`);
+    }
+  }
+
+  function refine() {
+    if (picking === "refine") { stopPicking(); say(`Refined: ${learnedMatches().length} of this kind.`); return; }
+    if (busy()) { say("Stop the run first."); return; }
+    if (!learnedHere) { say("Pick an item on this page first."); return; }
+    stopPicking();
+    refineNodes = [];
+    picking = "refine";
+    labelPickers();
+    document.addEventListener("mouseover", onHover, true);
+    const arm = () => {
+      disarmPick = armCapture(window, isOurs, (target) => {
+        disarmPick = null;
+        refineWith(target);
+        if (picking === "refine") { arm(); showPreview(); }
+      });
+    };
+    arm();
+    showPreview();
+    say("Click a green one to leave its kind out, or a grey dashed one to take its kind in. Done when right.");
   }
 
   function pickItem() {
@@ -1043,7 +1144,7 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window, onStep
     if (busy()) { say("Stop the run first."); return; }
     if (!targetRecord || (kind !== "box" && kind !== "button")) return;
     targetRecord = Object.assign({}, targetRecord, { kind });
-    writeTargetRecord(storage, keyFor(targetKey, TARGET_PREFIX + "this site"), targetRecord);
+    saveTarget();
     clearRowPaint();
     clearZipPaint();
     makeReader();
@@ -1055,6 +1156,7 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window, onStep
     if (busy()) { say("Stop the run first."); return; }
     stopPicking();
     targetRecord = null;
+    clearPreview();
     writeTargetRecord(storage, keyFor(targetKey, TARGET_PREFIX + "this site"), null);
     clearRowPaint();
     clearZipPaint();
@@ -1115,6 +1217,7 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window, onStep
 
   function play() {
     stopPicking();
+    clearPreview();
     if (mode === "click") { zipRunner.play(); return; }
     if (runner.state() === "running") runner.pause();
     else runner.play();
@@ -1204,11 +1307,22 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window, onStep
     return "tick";
   }
 
+  // How many of the picked kind, and how many look alike, for the switch.
+  function variantCounts() {
+    if (!learnedHere) return null;
+    const withKind = Object.assign({}, targetRecord, { variantOn: true });
+    const kind = bySlot(lookAlikes().filter((el) => matchesTarget(el, withKind)), withKind.variant).length;
+    return { on: targetRecord.variantOn !== false, kind, all: lookAlikes().length };
+  }
+
   function build() {
     view = createBatchPanel({
       mode,
       kind: learnedHere ? targetRecord.kind : null,
       onKind: setKind,
+      variant: variantCounts(),
+      onVariant: setVariantOn,
+      onRefine: refine,
       batchSize,
       startAt: readStart(storage, keyFor(startKey, START_PREFIX + "this site")),
       limit: readZipLimit(storage, keyFor(zipLimitKey, ZIP_LIMIT_PREFIX + "this site")),
@@ -1251,6 +1365,7 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window, onStep
       watchCounts();
     }
     showCounts();
+    showPreview();
   }
 
   function first() {
@@ -1275,6 +1390,7 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window, onStep
     build();
     if (mode === "click") { zipIds = cardSignature(); watchZip(); } else watchCounts();
     showCounts();
+    showPreview();
     first();
     // A page that draws its rows late is looked at again at 1.5, 4 and 8 s.
     rescans = [1500, 4000, 8000].map((wait) => setTimeout(() => {
@@ -1301,6 +1417,7 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window, onStep
     countsTimer = null;
     clearRowPaint();
     clearZipPaint();
+    clearPreview();
     if (view) view.el.remove();
     view = null;
     opened = false;
@@ -1313,6 +1430,7 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window, onStep
     if (view) view.el.remove();
     build();
     showCounts();
+    showPreview();
   }
 
   // A click run left on carries on across pages and reloads (two hours from

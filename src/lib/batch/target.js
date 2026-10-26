@@ -164,6 +164,110 @@ export function describeTarget(node, kind) {
   };
 }
 
+// ---- the kind among look-alikes ----
+
+// A picked item's path of tags and classes matches every look-alike: on a
+// card with a PDF, a DWG and an RVT icon, all three. What tells them apart is
+// read here: its own classes, the classes, pictures and drawings inside it,
+// its words and labels, data- values, and the kind of file it links to.
+
+// data- names that hold an id, a position or a tracker's tag, never a kind.
+const NOT_A_KIND = /(^|-)(id|key|index|idx|row|pos|position|track|tracking|gtm|ga|analytics|event|testid|test)(-|$)/i;
+const INSIDE_DEPTH = 4;
+const INSIDE_MOST = 40;
+
+function attr(node, name) {
+  try { return typeof node.getAttribute === "function" ? node.getAttribute(name) : null; } catch { return null; }
+}
+
+function classes(node) {
+  return classesOf(node).filter((name) => !STATE_CLASS.test(name));
+}
+
+function basename(url) {
+  const clean = String(url || "").split(/[?#]/)[0].split(/\s/)[0];
+  return clean.slice(clean.lastIndexOf("/") + 1).toLowerCase();
+}
+
+// A short fingerprint of an SVG's drawing, so two icons drawn alike agree.
+function shape(svg) {
+  let text = "";
+  try {
+    for (const part of svg.querySelectorAll("path, polygon, polyline, circle, rect, line")) {
+      text += (attr(part, "d") || attr(part, "points") || part.nodeName) + "|";
+      if (text.length > 400) break;
+    }
+  } catch { return ""; }
+  let hash = 0;
+  for (let at = 0; at < text.length; at++) hash = (hash * 31 + text.charCodeAt(at)) | 0;
+  return text ? (hash >>> 0).toString(36) : "";
+}
+
+function labelTrait(value) {
+  const words = buttonWords(value);
+  return words && words.length <= 40 ? words : "";
+}
+
+// What a node shows of itself and of what is inside it.
+export function traitsOf(node) {
+  const out = new Set();
+  if (!node || node.nodeType !== 1) return out;
+  for (const name of classes(node)) out.add("c:" + name);
+  const words = buttonWords(labelOf(node));
+  if (words && words.length <= 40) out.add("w:" + words);
+  const seen = [node];
+  const walk = (at, depth) => {
+    if (depth > INSIDE_DEPTH) return;
+    for (let child = at.firstElementChild; child && seen.length < INSIDE_MOST; child = child.nextElementSibling) {
+      seen.push(child);
+      for (const name of classes(child)) out.add("i:" + name);
+      walk(child, depth + 1);
+    }
+  };
+  walk(node, 1);
+  for (const each of seen) {
+    const tag = String(each.nodeName || "").toLowerCase();
+    for (const name of ["aria-label", "title", "alt"]) {
+      const said = labelTrait(attr(each, name));
+      if (said) out.add("l:" + said);
+    }
+    for (const item of Array.from(each.attributes || [])) {
+      const name = String(item.name || "");
+      if (!/^data-/.test(name) || /\d/.test(name) || NOT_A_KIND.test(name.slice(5))) continue;
+      const value = collapse(item.value).toLowerCase();
+      if (value.length > 30 || /\d{3,}/.test(value)) continue;
+      out.add("d:" + name + "=" + value);
+    }
+    if (tag === "img" || tag === "source") {
+      const file = basename(attr(each, "src") || attr(each, "srcset"));
+      if (file) out.add("img:" + file);
+    }
+    if (tag === "use") {
+      const ref = attr(each, "href") || attr(each, "xlink:href");
+      if (ref) out.add("use:" + ref.slice(ref.indexOf("#")));
+    }
+    if (tag === "svg") {
+      const drawn = shape(each);
+      if (drawn) out.add("svg:" + drawn);
+    }
+  }
+  // The kind of file it links to.
+  let link = null;
+  try { link = node.closest ? node.closest("a[href]") || (node.querySelector ? node.querySelector("a[href]") : null) : null; } catch { link = null; }
+  const file = link ? basename(attr(link, "href")) : "";
+  const ext = /\.([a-z0-9]{2,5})$/i.exec(file);
+  if (ext && !/^(html?|php|aspx?|jsp)$/i.test(ext[1])) out.add("ext:" + ext[1].toLowerCase());
+  return out;
+}
+
+// Whether a node is of the kind: every trait of `all`, none of `none`.
+export function hasTraits(node, variant, traits = traitsOf(node)) {
+  if (!variant) return true;
+  for (const trait of variant.all || []) if (!traits.has(trait)) return false;
+  for (const trait of variant.none || []) if (traits.has(trait)) return false;
+  return true;
+}
+
 // Same tag (and type and role), and at every level of the remembered path
 // the same tag, the same id, and at least one shared class where any were
 // remembered.
@@ -184,6 +288,8 @@ export function matchesTarget(node, record) {
     }
     at = at.parentElement;
   }
+  // The kind, once worked out (variant.js), unless the person chose all alike.
+  if (record.variant && record.variantOn !== false && !hasTraits(node, record.variant)) return false;
   return true;
 }
 

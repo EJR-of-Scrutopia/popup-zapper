@@ -47,6 +47,24 @@ function numberField(t, act, label, value, width, handler) {
   return { wrap, input };
 }
 
+// A row of joined buttons, the current one lit; the others call onPick.
+function segmented(t, act, options, current, onPick) {
+  const seg = tag("div");
+  seg.style.cssText = `display:flex;align-self:flex-start;border:1px solid ${t.border};border-radius:6px;overflow:hidden;`;
+  options.forEach(([value, label, title], i) => {
+    const on = current === value;
+    const b = tag("button", { textContent: label, type: "button" });
+    b.setAttribute("data-act", act + "-" + value);
+    if (title) b.title = title;
+    b.style.cssText = RESET + "border:0;padding:3px 10px;cursor:pointer;font:11px sans-serif;" +
+      (i ? `border-left:1px solid ${t.border};` : "") +
+      (on ? `background:${t.accent};color:#fff;font-weight:bold;` : `background:${t.head};color:${t.fg};`);
+    if (!on && onPick) b.addEventListener("click", () => onPick(value));
+    seg.appendChild(b);
+  });
+  return seg;
+}
+
 export function chipStyle(on, t = palette()) {
   return RESET + "padding:1px 8px;border-radius:10px;cursor:pointer;font:11px/1.6 sans-serif;" +
     (on ? `background:${t.accent};color:#fff;border:1px solid ${t.accent};`
@@ -54,9 +72,9 @@ export function chipStyle(on, t = palette()) {
 }
 
 export function createBatchPanel({
-  mode = "tick", kind = null, batchSize = 10, startAt = 1, limit = 50, position = null,
+  mode = "tick", kind = null, variant = null, batchSize = 10, startAt = 1, limit = 50, position = null,
   onClose, onPlay, onStop, onReset, onPickItem, onForgetItem, onPickButton, onSelectAll,
-  onSize, onStart, onLimit, onType, onKind, onSteps,
+  onSize, onStart, onLimit, onType, onKind, onSteps, onVariant, onRefine,
 }) {
   const t = palette();
   const panel = own(tag("div", { className: "pz-batch" }), "batch");
@@ -159,21 +177,27 @@ export function createBatchPanel({
   // A picked item may be ticked in batches or clicked each once; the guess
   // from what was clicked can be put right here.
   if (kind) {
-    const seg = tag("div");
-    seg.style.cssText = `display:flex;align-self:flex-start;border:1px solid ${t.border};border-radius:6px;overflow:hidden;`;
-    [["box", "Tick in batches"], ["button", "Click each"]].forEach(([value, label], i) => {
-      const on = kind === value;
-      const b = tag("button", { textContent: label, type: "button" });
-      b.setAttribute("data-act", "batch-kind-" + value);
-      b.title = value === "box" ? "Tick these in batches and press the page's download button"
-        : "Press each of these once, page by page";
-      b.style.cssText = RESET + "border:0;padding:3px 10px;cursor:pointer;font:11px sans-serif;" +
-        (i ? `border-left:1px solid ${t.border};` : "") +
-        (on ? `background:${t.accent};color:#fff;font-weight:bold;` : `background:${t.head};color:${t.fg};`);
-      if (!on && onKind) b.addEventListener("click", () => onKind(value));
-      seg.appendChild(b);
-    });
-    body.appendChild(seg);
+    body.appendChild(segmented(t, "batch-kind", [
+      ["box", "Tick in batches", "Tick these in batches and press the page's download button"],
+      ["button", "Click each", "Press each of these once, page by page"],
+    ], kind, onKind));
+  }
+
+  // Which of the look-alikes: only the picked one's kind (a PDF icon, not the
+  // DWG beside it), or every one alike; Refine puts the kind right by clicks.
+  let refine = null;
+  if (variant) {
+    const line = row();
+    if (variant.all > variant.kind || !variant.on) {
+      line.appendChild(segmented(t, "batch-variant", [
+        ["kind", `This kind ${variant.kind}`, "Only those like the one you picked (outlined green)"],
+        ["all", `All alike ${variant.all}`, "Every look-alike, whatever its icon or label"],
+      ], variant.on ? "kind" : "all", (value) => onVariant && onVariant(value === "kind")));
+    }
+    refine = button(t, "batch-refine", "✎ Refine", onRefine,
+      "Then click a green one to leave its kind out, or an unmarked look-alike to take its kind in");
+    line.appendChild(refine);
+    body.appendChild(line);
   }
 
   // Strip: counts, status, and details folded away.
@@ -251,6 +275,7 @@ export function createBatchPanel({
     },
     setPickButton(label) { if (pickButton) pickButton.textContent = label; },
     setReset(label) { reset.textContent = label; },
+    setRefine(label) { if (refine) refine.textContent = label; },
   };
   return view;
 }
