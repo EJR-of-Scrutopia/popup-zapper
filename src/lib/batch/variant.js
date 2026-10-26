@@ -4,6 +4,10 @@
 // is in what differs between them (target.js reads it as traits): an extra
 // class, the icon or picture inside, the words or label, a data- value, the
 // file it links to, or failing all of those, where it sits in its card.
+//
+// A picked item's variant is { kinds, none }: a node is taken when it is of
+// any of the kinds (each worked out from one example the person wanted) and
+// holds none of the traits of the examples they did not want.
 
 import { traitsOf, hasTraits } from "./target.js";
 
@@ -20,87 +24,125 @@ export function slotOf(node, alike, depth = 8) {
   return null;
 }
 
-// The kind, from the look-alikes on the page (`alike`), the traits of the
-// examples the person wants (`yes`, a list of Sets) and of those they do not
-// (`no`). A trait counts when every wanted example has it, it recurs (an
-// item's own name is no kind), and not every look-alike has it (else it tells
-// nothing apart). A trait of an unwanted example that no wanted one has rules
-// out whatever holds it.
-export function workOutVariant(alike, yes, no = []) {
-  if (!yes.length) return null;
+// Its place in its card; a box holding every look-alike is the list, no card.
+export function cardSlot(node, alike) {
+  const at = slotOf(node, alike);
+  return at && at.size < alike.length ? at : null;
+}
+
+function countTraits(alike) {
   const count = new Map();
   for (const node of alike) for (const trait of traitsOf(node)) count.set(trait, (count.get(trait) || 0) + 1);
-  let common = null;
-  for (const own of yes) common = common ? new Set([...common].filter((trait) => own.has(trait))) : new Set(own);
-  const all = [...common].filter((trait) => (count.get(trait) || 0) >= 2 && count.get(trait) < alike.length).sort();
-  const wanted = new Set();
-  for (const own of yes) for (const trait of own) wanted.add(trait);
-  const none = [];
-  for (const own of no) for (const trait of own) if (!wanted.has(trait) && none.indexOf(trait) < 0) none.push(trait);
-  return { all, none: none.sort(), slot: null };
+  return count;
 }
 
-// When the kind still leaves several side by side in a wanted node's own card
-// (three icons drawn alike), the place it holds there is the kind.
-export function slotFor(kept, wantedNodes) {
-  const first = wantedNodes.length ? slotOf(wantedNodes[0], kept) : null;
-  if (!first || first.size >= kept.length) return null;
-  const same = wantedNodes.every((node) => { const at = slotOf(node, kept); return at && at.index === first.index; });
-  return same ? first.index : null;
+const hasAll = (traits, all) => all.every((trait) => traits.has(trait));
+
+// One example's kind: its traits that recur (an item's own name is no kind)
+// and that not every look-alike has (else they tell nothing apart). When
+// those still leave several in its card (icons drawn alike), its place there
+// is the kind too. `place` is kept either way, for ruling a neighbour out.
+export function kindOf(node, alike, count = countTraits(alike)) {
+  const own = traitsOf(node);
+  const all = [...own].filter((trait) => (count.get(trait) || 0) >= 2 && count.get(trait) < alike.length).sort();
+  const card = cardSlot(node, alike);
+  let slot = null;
+  if (card) {
+    const inCard = alike.filter((each) => card.box.contains(each) && hasAll(traitsOf(each), all));
+    if (inCard.length > 1) slot = card.index;
+  }
+  return { all, slot, place: card ? card.index : null };
 }
 
-// Of nodes already matched by traits, those in the remembered place. Across a
-// page, a node alone in its box (or in a box holding every match, the list
-// itself) is in no card and so in no place; within one row, the row is the card.
-export function bySlot(matched, variant, { inRow = false } = {}) {
-  if (!variant || variant.slot === null || variant.slot === undefined) return matched;
+const hasSlot = (variant) => !!variant && (variant.kinds || []).some((kind) => kind.slot !== null && kind.slot !== undefined);
+export { hasSlot };
+
+// Of nodes already matched by traits, those in a kind's place where the kind
+// has one. Positions are counted among the look-alikes (`alike`).
+export function bySlot(matched, variant, alike = matched) {
+  if (!hasSlot(variant)) return matched;
   return matched.filter((node) => {
-    const at = slotOf(node, matched);
-    if (!at) return inRow && variant.slot === 0;
-    if (!inRow && at.size === matched.length) return false;
-    return at.index === variant.slot;
+    const traits = traitsOf(node);
+    return variant.kinds.some((kind) => {
+      if (!hasAll(traits, kind.all)) return false;
+      if (kind.slot === null || kind.slot === undefined) return true;
+      const card = cardSlot(node, alike);
+      return !!card && card.index === kind.slot;
+    });
   });
 }
 
-// The look-alikes of the kind, in page order.
-export function ofVariant(alike, variant, options) {
+function matchesKind(node, kind, alike) {
+  if (!hasAll(traitsOf(node), kind.all)) return false;
+  if (kind.slot === null || kind.slot === undefined) return true;
+  const card = cardSlot(node, alike);
+  return !!card && card.index === kind.slot;
+}
+
+// The look-alikes of the variant, in page order.
+export function ofVariant(alike, variant) {
   if (!variant) return alike.slice();
-  return bySlot(alike.filter((node) => hasTraits(node, variant)), variant, options);
+  return bySlot(alike.filter((node) => hasTraits(node, variant)), variant, alike);
 }
 
 export function isNarrowing(variant) {
-  return !!variant && ((variant.all && variant.all.length > 0) || (variant.none && variant.none.length > 0)
-    || (variant.slot !== null && variant.slot !== undefined));
+  return !!variant && ((variant.none || []).length > 0
+    || (variant.kinds || []).some((kind) => kind.all.length > 0 || (kind.slot !== null && kind.slot !== undefined)));
 }
 
-// A picked item's record, narrowed to the picked one's kind: `alike` is every
-// look-alike on the page (the picked one among them). The examples are kept
-// as traits, so the kind can be put right later, on another visit.
+// A picked item's record, narrowed to the picked one's kind; `alike` is every
+// look-alike on the page, the picked one among them. The examples are kept as
+// traits, so the kind can be put right later, on another visit.
 export function narrowRecord(record, picked, alike) {
-  const yes = [traitsOf(picked)];
-  const variant = workOutVariant(alike, yes, []);
-  const kept = alike.filter((node) => hasTraits(node, variant));
-  variant.slot = slotFor(kept, [picked]);
+  const kind = kindOf(picked, alike);
+  const variant = { kinds: [kind], none: [] };
   return Object.assign({}, record, {
     variant: isNarrowing(variant) ? variant : null,
     variantOn: true,
-    examples: { yes: yes.map((set) => [...set]), no: [] },
+    examples: { yes: [[...traitsOf(picked)]], no: [] },
   });
 }
 
-// The record after the person says "this one too" or "not this one".
-export function refineRecord(record, node, wanted, alike, wantedNodes = []) {
+// The record after the person says "this kind too" (wanted) or "not this".
+// Not this, on one of a kind taken in earlier: that kind goes again. Else the
+// traits of the unwanted one that no wanted example has rule their holders
+// out; when there are none (drawn alike), each kind is held to its own place
+// in the card, if that leaves the unwanted one out. Kinds and the examples
+// they came from stay in step, one for one.
+export function refineRecord(record, node, wanted, alike) {
   const examples = record.examples || { yes: [], no: [] };
-  const yes = examples.yes.map((list) => new Set(list));
-  const no = examples.no.map((list) => new Set(list));
-  (wanted ? yes : no).push(traitsOf(node));
-  const variant = workOutVariant(alike, yes, no) || { all: [], none: [], slot: null };
-  const kept = alike.filter((each) => hasTraits(each, variant));
-  const nodes = wanted ? wantedNodes.concat([node]) : wantedNodes;
-  variant.slot = nodes.length ? slotFor(kept, nodes) : (record.variant ? record.variant.slot : null);
-  return Object.assign({}, record, {
-    variant: isNarrowing(variant) ? variant : null,
-    variantOn: true,
-    examples: { yes: yes.map((set) => [...set]), no: no.map((set) => [...set]) },
-  });
+  const count = countTraits(alike);
+  const own = traitsOf(node);
+  let variant = record.variant
+    ? { kinds: record.variant.kinds.map((kind) => Object.assign({}, kind)), none: record.variant.none.slice() }
+    : { kinds: [{ all: [], slot: null, place: null }], none: [] };
+  let yes = examples.yes.slice();
+  let no = examples.no.slice();
+  if (wanted) {
+    variant.kinds.push(kindOf(node, alike, count));
+    variant.none = variant.none.filter((trait) => !own.has(trait));
+    yes = yes.concat([[...own]]);
+  } else {
+    const matching = variant.kinds.map((kind, at) => (matchesKind(node, kind, alike) ? at : -1)).filter((at) => at >= 0);
+    if (matching.length && matching.length < variant.kinds.length) {
+      variant.kinds = variant.kinds.filter((kind, at) => matching.indexOf(at) < 0);
+      yes = yes.filter((list, at) => matching.indexOf(at) < 0);
+      return Object.assign({}, record, { variant, variantOn: true, examples: { yes, no } });
+    }
+    const wantedTraits = new Set(yes.flat());
+    const add = [...own].filter((trait) => !wantedTraits.has(trait) && variant.none.indexOf(trait) < 0);
+    if (add.length) {
+      variant.none = variant.none.concat(add).sort();
+    } else {
+      const card = cardSlot(node, alike);
+      for (const kind of variant.kinds) {
+        if ((kind.slot === null || kind.slot === undefined) && kind.place !== null && kind.place !== undefined
+          && (!card || card.index !== kind.place)) {
+          kind.slot = kind.place;
+        }
+      }
+    }
+    no = no.concat([[...own]]);
+  }
+  return Object.assign({}, record, { variant, variantOn: true, examples: { yes, no } });
 }

@@ -74,8 +74,14 @@ pages where every item has its own "Add to zip" or "Add to basket" button.
 - **Click each** (items with their own button): **Play** presses each item's button
   once, turns the pages itself, and stops at the last page or at **Stop after**.
 - **Pick item**: click one of the things you want clicked many times (a checkbox or a
-  button) and every match on the page is used. Remembered for the site; the switch
-  under it says whether to tick them in batches or click each. **✕** forgets it.
+  button) and every one of the same kind is used, outlined green before you press
+  Play. Of a PDF, a DWG and an RVT icon on each card, picking the PDF takes the PDFs
+  only (told apart by the icon, label, file type, or where it sits in the card).
+  Remembered for the site; the first switch says whether to tick them in batches or
+  click each. **✕** forgets it.
+- **This kind / All alike**: only the picked kind, or every look-alike.
+  **✎ Refine** puts the kind right: click a green one to leave its kind out, a grey
+  dashed one to take its kind in, then **✓ Done**.
 - **⬇ Download button**: click the page's own download button if it is not found by
   itself.
 - **Reset** forgets the site's ledger (press twice). **Details** shows what the page did

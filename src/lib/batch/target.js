@@ -260,12 +260,14 @@ export function traitsOf(node) {
   return out;
 }
 
-// Whether a node is of the kind: every trait of `all`, none of `none`.
+// Whether a node is of a picked variant (variant.js): none of its ruled-out
+// traits, and every trait of one of its kinds. Places in a card are judged
+// over the whole set, in variant.js.
 export function hasTraits(node, variant, traits = traitsOf(node)) {
   if (!variant) return true;
-  for (const trait of variant.all || []) if (!traits.has(trait)) return false;
   for (const trait of variant.none || []) if (traits.has(trait)) return false;
-  return true;
+  const kinds = variant.kinds || [];
+  return !kinds.length || kinds.some((kind) => (kind.all || []).every((trait) => traits.has(trait)));
 }
 
 // Same tag (and type and role), and at every level of the remembered path

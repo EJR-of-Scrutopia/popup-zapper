@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Popup Zapper
 // @namespace    https://github.com/EJR-of-Scrutopia/popup-zapper
-// @version      2.3.3
+// @version      2.4.0
 // @description  Remove login/consent/newsletter/paywall popups, reveal blurred/gated content, defeat reload traps, learn popups by click, click many checkboxes or buttons in batches, and record one item's clicks to repeat for every item in a list.
 // @author       Param
 // @homepageURL  https://github.com/EJR-of-Scrutopia/popup-zapper
@@ -642,9 +642,9 @@
     for (const cls of el.classList || []) {
       if (!isHashedToken(cls)) out.push({ type: "class", value: cls, action: "remove" });
     }
-    for (const attr2 of el.attributes || []) {
-      if (attr2.name.startsWith("data-")) {
-        out.push({ type: "attr", value: attr2.name, action: "remove" });
+    for (const attr3 of el.attributes || []) {
+      if (attr3.name.startsWith("data-")) {
+        out.push({ type: "attr", value: attr3.name, action: "remove" });
       }
     }
     if (out.length === 0) {
@@ -1312,17 +1312,24 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       }
     };
   }
-  function learnedSource(doc, record, matches, isOurs = () => false) {
+  function learnedSource(doc, record, matches, isOurs = () => false, narrow = (list) => list) {
     const tag2 = record && record.tag ? record.tag : "*";
     const fits = (el) => !isOurs(el) && matches(el, record);
+    let found = null;
+    const boxes = () => {
+      const list = narrow(Array.from(doc.getElementsByTagName(tag2)).filter(fits));
+      found = new Set(list);
+      return list;
+    };
     return {
       learned: true,
-      boxes: () => Array.from(doc.getElementsByTagName(tag2)).filter(fits),
+      boxes,
       within: (node, cap = 2) => {
+        if (!found) boxes();
         let n = 0;
         try {
           for (const el of node.getElementsByTagName(tag2)) {
-            if (fits(el) && ++n >= cap) break;
+            if (found.has(el) && ++n >= cap) break;
           }
         } catch {
           return 1;
@@ -1330,7 +1337,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
         return n;
       },
       checked() {
-        return this.boxes().filter(isTicked);
+        return boxes().filter(isTicked);
       }
     };
   }
@@ -2572,9 +2579,9 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
   function segmentOf(node, dropState = false) {
     const tag2 = String(node.tagName || "").toLowerCase();
     const id = typeof node.id === "string" && SAFE_NAME.test(node.id) && !/\d/.test(node.id) ? node.id : "";
-    let classes = classesOf(node);
-    if (dropState) classes = classes.filter((name) => !STATE_CLASS.test(name));
-    return { tag: tag2, id, classes: classes.slice(0, 3) };
+    let classes2 = classesOf(node);
+    if (dropState) classes2 = classes2.filter((name) => !STATE_CLASS.test(name));
+    return { tag: tag2, id, classes: classes2.slice(0, 3) };
   }
   function chainOf(node, dropState = false) {
     const chain = [];
@@ -2677,6 +2684,100 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       link: kind === "button" && !!href && !/^(#|javascript:)/i.test(href) && node.getAttribute("download") === null && node.getAttribute("target") !== "_blank"
     };
   }
+  var NOT_A_KIND = /(^|-)(id|key|index|idx|row|pos|position|track|tracking|gtm|ga|analytics|event|testid|test)(-|$)/i;
+  var INSIDE_DEPTH = 4;
+  var INSIDE_MOST = 40;
+  function attr2(node, name) {
+    try {
+      return typeof node.getAttribute === "function" ? node.getAttribute(name) : null;
+    } catch {
+      return null;
+    }
+  }
+  function classes(node) {
+    return classesOf(node).filter((name) => !STATE_CLASS.test(name));
+  }
+  function basename(url) {
+    const clean = String(url || "").split(/[?#]/)[0].split(/\s/)[0];
+    return clean.slice(clean.lastIndexOf("/") + 1).toLowerCase();
+  }
+  function shape(svg) {
+    let text = "";
+    try {
+      for (const part of svg.querySelectorAll("path, polygon, polyline, circle, rect, line")) {
+        text += (attr2(part, "d") || attr2(part, "points") || part.nodeName) + "|";
+        if (text.length > 400) break;
+      }
+    } catch {
+      return "";
+    }
+    let hash = 0;
+    for (let at = 0; at < text.length; at++) hash = hash * 31 + text.charCodeAt(at) | 0;
+    return text ? (hash >>> 0).toString(36) : "";
+  }
+  function labelTrait(value) {
+    const words = buttonWords(value);
+    return words && words.length <= 40 ? words : "";
+  }
+  function traitsOf(node) {
+    const out = /* @__PURE__ */ new Set();
+    if (!node || node.nodeType !== 1) return out;
+    for (const name of classes(node)) out.add("c:" + name);
+    const words = buttonWords(labelOf(node));
+    if (words && words.length <= 40) out.add("w:" + words);
+    const seen = [node];
+    const walk = (at, depth) => {
+      if (depth > INSIDE_DEPTH) return;
+      for (let child = at.firstElementChild; child && seen.length < INSIDE_MOST; child = child.nextElementSibling) {
+        seen.push(child);
+        for (const name of classes(child)) out.add("i:" + name);
+        walk(child, depth + 1);
+      }
+    };
+    walk(node, 1);
+    for (const each of seen) {
+      const tag2 = String(each.nodeName || "").toLowerCase();
+      for (const name of ["aria-label", "title", "alt"]) {
+        const said = labelTrait(attr2(each, name));
+        if (said) out.add("l:" + said);
+      }
+      for (const item of Array.from(each.attributes || [])) {
+        const name = String(item.name || "");
+        if (!/^data-/.test(name) || /\d/.test(name) || NOT_A_KIND.test(name.slice(5))) continue;
+        const value = collapse(item.value).toLowerCase();
+        if (value.length > 30 || /\d{3,}/.test(value)) continue;
+        out.add("d:" + name + "=" + value);
+      }
+      if (tag2 === "img" || tag2 === "source") {
+        const file2 = basename(attr2(each, "src") || attr2(each, "srcset"));
+        if (file2) out.add("img:" + file2);
+      }
+      if (tag2 === "use") {
+        const ref = attr2(each, "href") || attr2(each, "xlink:href");
+        if (ref) out.add("use:" + ref.slice(ref.indexOf("#")));
+      }
+      if (tag2 === "svg") {
+        const drawn = shape(each);
+        if (drawn) out.add("svg:" + drawn);
+      }
+    }
+    let link = null;
+    try {
+      link = node.closest ? node.closest("a[href]") || (node.querySelector ? node.querySelector("a[href]") : null) : null;
+    } catch {
+      link = null;
+    }
+    const file = link ? basename(attr2(link, "href")) : "";
+    const ext = /\.([a-z0-9]{2,5})$/i.exec(file);
+    if (ext && !/^(html?|php|aspx?|jsp)$/i.test(ext[1])) out.add("ext:" + ext[1].toLowerCase());
+    return out;
+  }
+  function hasTraits(node, variant, traits = traitsOf(node)) {
+    if (!variant) return true;
+    for (const trait of variant.none || []) if (traits.has(trait)) return false;
+    const kinds = variant.kinds || [];
+    return !kinds.length || kinds.some((kind) => (kind.all || []).every((trait) => traits.has(trait)));
+  }
   function matchesTarget(node, record) {
     if (!node || !record || node.nodeType !== 1) return false;
     if (String(node.tagName || "").toLowerCase() !== record.tag) return false;
@@ -2694,6 +2795,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       }
       at = at.parentElement;
     }
+    if (record.variant && record.variantOn !== false && !hasTraits(node, record.variant)) return false;
     return true;
   }
   var SWALLOWED = ["pointerdown", "mousedown", "pointerup", "mouseup"];
@@ -3899,12 +4001,27 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     wrap.appendChild(input);
     return { wrap, input };
   }
+  function segmented(t, act, options, current, onPick) {
+    const seg = tag("div");
+    seg.style.cssText = `display:flex;align-self:flex-start;border:1px solid ${t.border};border-radius:6px;overflow:hidden;`;
+    options.forEach(([value, label, title], i) => {
+      const on = current === value;
+      const b = tag("button", { textContent: label, type: "button" });
+      b.setAttribute("data-act", act + "-" + value);
+      if (title) b.title = title;
+      b.style.cssText = RESET + "border:0;padding:3px 10px;cursor:pointer;font:11px sans-serif;" + (i ? `border-left:1px solid ${t.border};` : "") + (on ? `background:${t.accent};color:#fff;font-weight:bold;` : `background:${t.head};color:${t.fg};`);
+      if (!on && onPick) b.addEventListener("click", () => onPick(value));
+      seg.appendChild(b);
+    });
+    return seg;
+  }
   function chipStyle(on, t = palette()) {
     return RESET + "padding:1px 8px;border-radius:10px;cursor:pointer;font:11px/1.6 sans-serif;" + (on ? `background:${t.accent};color:#fff;border:1px solid ${t.accent};` : `background:${t.chip};color:${t.sub};border:1px solid ${t.chipBorder};text-decoration:line-through;`);
   }
   function createBatchPanel({
     mode = "tick",
     kind = null,
+    variant = null,
     batchSize = 10,
     startAt = 1,
     limit = 50,
@@ -3922,7 +4039,9 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     onLimit,
     onType,
     onKind,
-    onSteps
+    onSteps,
+    onVariant,
+    onRefine
   }) {
     const t = palette();
     const panel = own(tag("div", { className: "pz-batch" }), "batch");
@@ -4023,18 +4142,29 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     ));
     body.appendChild(teach);
     if (kind) {
-      const seg = tag("div");
-      seg.style.cssText = `display:flex;align-self:flex-start;border:1px solid ${t.border};border-radius:6px;overflow:hidden;`;
-      [["box", "Tick in batches"], ["button", "Click each"]].forEach(([value, label], i) => {
-        const on = kind === value;
-        const b = tag("button", { textContent: label, type: "button" });
-        b.setAttribute("data-act", "batch-kind-" + value);
-        b.title = value === "box" ? "Tick these in batches and press the page's download button" : "Press each of these once, page by page";
-        b.style.cssText = RESET + "border:0;padding:3px 10px;cursor:pointer;font:11px sans-serif;" + (i ? `border-left:1px solid ${t.border};` : "") + (on ? `background:${t.accent};color:#fff;font-weight:bold;` : `background:${t.head};color:${t.fg};`);
-        if (!on && onKind) b.addEventListener("click", () => onKind(value));
-        seg.appendChild(b);
-      });
-      body.appendChild(seg);
+      body.appendChild(segmented(t, "batch-kind", [
+        ["box", "Tick in batches", "Tick these in batches and press the page's download button"],
+        ["button", "Click each", "Press each of these once, page by page"]
+      ], kind, onKind));
+    }
+    let refine = null;
+    if (variant) {
+      const line = row();
+      if (variant.all > variant.kind || !variant.on) {
+        line.appendChild(segmented(t, "batch-variant", [
+          ["kind", `This kind ${variant.kind}`, "Only those like the one you picked (outlined green)"],
+          ["all", `All alike ${variant.all}`, "Every look-alike, whatever its icon or label"]
+        ], variant.on ? "kind" : "all", (value) => onVariant && onVariant(value === "kind")));
+      }
+      refine = button(
+        t,
+        "batch-refine",
+        "\u270E Refine",
+        onRefine,
+        "Then click a green one to leave its kind out, or an unmarked look-alike to take its kind in"
+      );
+      line.appendChild(refine);
+      body.appendChild(line);
     }
     const strip = tag("div");
     strip.style.cssText = `padding:7px 12px;border-top:1px solid ${t.border};background:${t.head};display:flex;flex-direction:column;gap:3px;`;
@@ -4113,6 +4243,9 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       },
       setReset(label) {
         reset.textContent = label;
+      },
+      setRefine(label) {
+        if (refine) refine.textContent = label;
       }
     };
     return view;
@@ -4141,6 +4274,104 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       window.addEventListener("pointerup", up, true);
       event.preventDefault();
     });
+  }
+
+  // src/lib/batch/variant.js
+  function slotOf(node, alike, depth = 8) {
+    let at = node;
+    for (let step = 0; step < depth && at; step++) {
+      at = at.parentElement;
+      if (!at) break;
+      const inside = alike.filter((each) => at.contains(each));
+      if (inside.length > 1) return { box: at, index: inside.indexOf(node), size: inside.length };
+    }
+    return null;
+  }
+  function cardSlot(node, alike) {
+    const at = slotOf(node, alike);
+    return at && at.size < alike.length ? at : null;
+  }
+  function countTraits(alike) {
+    const count = /* @__PURE__ */ new Map();
+    for (const node of alike) for (const trait of traitsOf(node)) count.set(trait, (count.get(trait) || 0) + 1);
+    return count;
+  }
+  var hasAll = (traits, all) => all.every((trait) => traits.has(trait));
+  function kindOf(node, alike, count = countTraits(alike)) {
+    const own2 = traitsOf(node);
+    const all = [...own2].filter((trait) => (count.get(trait) || 0) >= 2 && count.get(trait) < alike.length).sort();
+    const card = cardSlot(node, alike);
+    let slot = null;
+    if (card) {
+      const inCard = alike.filter((each) => card.box.contains(each) && hasAll(traitsOf(each), all));
+      if (inCard.length > 1) slot = card.index;
+    }
+    return { all, slot, place: card ? card.index : null };
+  }
+  var hasSlot = (variant) => !!variant && (variant.kinds || []).some((kind) => kind.slot !== null && kind.slot !== void 0);
+  function bySlot(matched, variant, alike = matched) {
+    if (!hasSlot(variant)) return matched;
+    return matched.filter((node) => {
+      const traits = traitsOf(node);
+      return variant.kinds.some((kind) => {
+        if (!hasAll(traits, kind.all)) return false;
+        if (kind.slot === null || kind.slot === void 0) return true;
+        const card = cardSlot(node, alike);
+        return !!card && card.index === kind.slot;
+      });
+    });
+  }
+  function matchesKind(node, kind, alike) {
+    if (!hasAll(traitsOf(node), kind.all)) return false;
+    if (kind.slot === null || kind.slot === void 0) return true;
+    const card = cardSlot(node, alike);
+    return !!card && card.index === kind.slot;
+  }
+  function isNarrowing(variant) {
+    return !!variant && ((variant.none || []).length > 0 || (variant.kinds || []).some((kind) => kind.all.length > 0 || kind.slot !== null && kind.slot !== void 0));
+  }
+  function narrowRecord(record, picked, alike) {
+    const kind = kindOf(picked, alike);
+    const variant = { kinds: [kind], none: [] };
+    return Object.assign({}, record, {
+      variant: isNarrowing(variant) ? variant : null,
+      variantOn: true,
+      examples: { yes: [[...traitsOf(picked)]], no: [] }
+    });
+  }
+  function refineRecord(record, node, wanted, alike) {
+    const examples = record.examples || { yes: [], no: [] };
+    const count = countTraits(alike);
+    const own2 = traitsOf(node);
+    let variant = record.variant ? { kinds: record.variant.kinds.map((kind) => Object.assign({}, kind)), none: record.variant.none.slice() } : { kinds: [{ all: [], slot: null, place: null }], none: [] };
+    let yes = examples.yes.slice();
+    let no2 = examples.no.slice();
+    if (wanted) {
+      variant.kinds.push(kindOf(node, alike, count));
+      variant.none = variant.none.filter((trait) => !own2.has(trait));
+      yes = yes.concat([[...own2]]);
+    } else {
+      const matching = variant.kinds.map((kind, at) => matchesKind(node, kind, alike) ? at : -1).filter((at) => at >= 0);
+      if (matching.length && matching.length < variant.kinds.length) {
+        variant.kinds = variant.kinds.filter((kind, at) => matching.indexOf(at) < 0);
+        yes = yes.filter((list, at) => matching.indexOf(at) < 0);
+        return Object.assign({}, record, { variant, variantOn: true, examples: { yes, no: no2 } });
+      }
+      const wantedTraits = new Set(yes.flat());
+      const add = [...own2].filter((trait) => !wantedTraits.has(trait) && variant.none.indexOf(trait) < 0);
+      if (add.length) {
+        variant.none = variant.none.concat(add).sort();
+      } else {
+        const card = cardSlot(node, alike);
+        for (const kind of variant.kinds) {
+          if ((kind.slot === null || kind.slot === void 0) && kind.place !== null && kind.place !== void 0 && (!card || card.index !== kind.place)) {
+            kind.slot = kind.place;
+          }
+        }
+      }
+      no2 = no2.concat([[...own2]]);
+    }
+    return Object.assign({}, record, { variant, variantOn: true, examples: { yes, no: no2 } });
   }
 
   // src/lib/batch/pager.js
@@ -4287,14 +4518,26 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     let reader = null;
     function makeReader() {
       learnedHere = !!targetRecord && learnedMatches().length > 0;
-      const source = learnedHere && targetRecord.kind === "box" ? learnedSource(document, targetRecord, matchesTarget, isOurs) : autoSource(document, isOurs);
+      const source = learnedHere && targetRecord.kind === "box" ? learnedSource(document, targetRecord, matchesTarget, isOurs, (list) => keepPlaces(list)) : autoSource(document, isOurs);
       reader = createRowReader(document, { now: () => Date.now(), source });
     }
     const liveRows = () => reader.rows();
     const insideRows = (node) => reader.insideRow(node);
+    function kindNow() {
+      return targetRecord && targetRecord.variantOn !== false ? targetRecord.variant || null : null;
+    }
+    function keepPlaces(matched, variant = kindNow()) {
+      return hasSlot(variant) ? bySlot(matched, variant, lookAlikes()) : matched;
+    }
+    function lookAlikes(record = targetRecord) {
+      if (!record) return [];
+      const loose = Object.assign({}, record, { variant: null });
+      return Array.from(document.getElementsByTagName(record.tag)).filter((el) => !isOurs(el) && matchesTarget(el, loose));
+    }
     function learnedMatches() {
       if (!targetRecord) return [];
-      return Array.from(document.getElementsByTagName(targetRecord.tag)).filter((el) => !isOurs(el) && matchesTarget(el, targetRecord));
+      const matched = Array.from(document.getElementsByTagName(targetRecord.tag)).filter((el) => !isOurs(el) && matchesTarget(el, targetRecord));
+      return keepPlaces(matched);
     }
     makeReader();
     const stores = /* @__PURE__ */ new Map();
@@ -5138,7 +5381,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
         unhover();
         return;
       }
-      const found = picking === "item" ? resolveTarget(event.target) : null;
+      const found = picking === "item" || picking === "refine" ? resolveTarget(event.target) : null;
       const el = found ? found.node : event.target && event.target.closest ? event.target.closest(CLICKABLE2) || event.target : null;
       if (!el || hovered && hovered.el === el) return;
       unhover();
@@ -5152,11 +5395,38 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       }
       if (picking) document.removeEventListener("mouseover", onHover, true);
       unhover();
+      const refining = picking === "refine";
       picking = null;
       labelPickers();
+      if (refining) showPreview();
+    }
+    const previewed = /* @__PURE__ */ new Map();
+    function clearPreview() {
+      for (const [node, was] of previewed) {
+        try {
+          node.style.outline = was;
+        } catch {
+        }
+      }
+      previewed.clear();
+    }
+    function mark(node, outline) {
+      if (!previewed.has(node)) previewed.set(node, node.style.outline);
+      node.style.outline = outline;
+    }
+    function showPreview() {
+      clearPreview();
+      if (!opened || !learnedHere || busy()) return;
+      const taken = learnedMatches();
+      for (const node of taken.slice(0, 1e3)) mark(node, "2px solid #2e7d32");
+      if (picking === "refine") {
+        const kept = new Set(taken);
+        for (const node of lookAlikes().slice(0, 1e3)) if (!kept.has(node)) mark(node, "2px dashed #9e9e9e");
+      }
     }
     function labelPickers() {
       if (!view) return;
+      view.setRefine(picking === "refine" ? "\u2713 Done" : "\u270E Refine");
       view.setPickItem(
         picking === "item" ? "Cancel picking" : !targetRecord ? "\u2610 Pick item" : learnedHere ? `\u2611 Item: ${targetRecord.kind === "box" ? "checkbox" : "button"}` : "\u2611 Item (not on this page)",
         !!targetRecord && picking !== "item"
@@ -5175,37 +5445,100 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     function busy() {
       return runner.state() !== "idle" || zipRunner.state() !== "idle" || selectingAll;
     }
-    function flash(nodes) {
-      const held = nodes.slice(0, 500).map((node) => ({ node, was: node.style.outline }));
-      for (const each of held) each.node.style.outline = "2px solid #2e7d32";
-      setTimeout(() => {
-        for (const each of held) each.node.style.outline = each.was;
-      }, 1600);
-    }
     function learnItem(target) {
       const found = resolveTarget(target);
       if (!found) {
         say("Nothing there to learn.");
         return;
       }
-      const record = describeTarget(found.node, found.kind);
+      let record = describeTarget(found.node, found.kind);
       if (!record.chain.length) {
         say("That can't be found again. Pick something inside the page.");
         return;
       }
-      const matches = Array.from(document.getElementsByTagName(record.tag)).filter((el) => !isOurs(el) && matchesTarget(el, record));
+      const alike = lookAlikes(record);
       if (record.kind === "button" && record.words) {
-        const same = matches.filter((el) => buttonWords(labelOf(el)) === record.words).length;
-        if (same < Math.max(2, Math.ceil(matches.length / 2))) record.words = "";
+        const same = alike.filter((el) => buttonWords(labelOf(el)) === record.words).length;
+        if (same < 2) record.words = "";
       }
+      record = narrowRecord(record, found.node, alike);
       targetRecord = record;
       const kept = writeTargetRecord(storage, keyFor2(targetKey, TARGET_PREFIX + "this site"), record);
       clearRowPaint();
       clearZipPaint();
       makeReader();
       rebuild();
-      flash(matches);
-      say(`Learned: ${matches.length} matching ${record.kind === "box" ? "checkbox(es)" : "button(s)"}.` + (record.link ? " They are plain links, so clicking each may open pages." : "") + (kept ? "" : " Storage refused, so it lasts until reload."));
+      const taken = learnedMatches().length;
+      say(`Learned: ${taken} ${record.kind === "box" ? "checkbox(es)" : "button(s)"} of this kind` + (alike.length > taken ? ` (${alike.length} look alike).` : ".") + (record.link ? " They are plain links, so clicking each may open pages." : "") + (kept ? "" : " Storage refused, so it lasts until reload."));
+    }
+    function saveTarget() {
+      return writeTargetRecord(storage, keyFor2(targetKey, TARGET_PREFIX + "this site"), targetRecord);
+    }
+    function setVariantOn(on) {
+      if (busy()) {
+        say("Stop the run first.");
+        return;
+      }
+      if (!targetRecord) return;
+      targetRecord = Object.assign({}, targetRecord, { variantOn: !!on });
+      saveTarget();
+      clearRowPaint();
+      clearZipPaint();
+      rebuild();
+      say(on ? `Only this kind: ${learnedMatches().length}.` : `Every look-alike: ${learnedMatches().length}.`);
+    }
+    function refineWith(target) {
+      const found = resolveTarget(target);
+      const alike = lookAlikes();
+      if (!found || alike.indexOf(found.node) < 0) {
+        say("That isn't like the picked item. Click a green one, or a grey dashed one.");
+        return;
+      }
+      const wanted = learnedMatches().indexOf(found.node) < 0;
+      const before = learnedMatches().length;
+      targetRecord = refineRecord(Object.assign({}, targetRecord, { variantOn: true }), found.node, wanted, alike);
+      saveTarget();
+      clearRowPaint();
+      clearZipPaint();
+      rebuild();
+      const now = learnedMatches();
+      if (!wanted && now.indexOf(found.node) >= 0) {
+        say("That one can't be told apart from the one you picked, so it stays. Pick item again to start over.");
+      } else {
+        say(`${wanted ? "Taken in" : "Left out"}: now ${now.length} of ${alike.length} (was ${before}). Click more, or Done.`);
+      }
+    }
+    function refine() {
+      if (picking === "refine") {
+        stopPicking();
+        say(`Refined: ${learnedMatches().length} of this kind.`);
+        return;
+      }
+      if (busy()) {
+        say("Stop the run first.");
+        return;
+      }
+      if (!learnedHere) {
+        say("Pick an item on this page first.");
+        return;
+      }
+      stopPicking();
+      picking = "refine";
+      labelPickers();
+      document.addEventListener("mouseover", onHover, true);
+      const arm = () => {
+        disarmPick = armCapture(window, isOurs, (target) => {
+          disarmPick = null;
+          refineWith(target);
+          if (picking === "refine") {
+            arm();
+            showPreview();
+          }
+        });
+      };
+      arm();
+      showPreview();
+      say("Click a green one to leave its kind out, or a grey dashed one to take its kind in. Done when right.");
     }
     function pickItem() {
       if (picking === "item") {
@@ -5228,7 +5561,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       }
       if (!targetRecord || kind !== "box" && kind !== "button") return;
       targetRecord = Object.assign({}, targetRecord, { kind });
-      writeTargetRecord(storage, keyFor2(targetKey, TARGET_PREFIX + "this site"), targetRecord);
+      saveTarget();
       clearRowPaint();
       clearZipPaint();
       makeReader();
@@ -5242,6 +5575,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       }
       stopPicking();
       targetRecord = null;
+      clearPreview();
       writeTargetRecord(storage, keyFor2(targetKey, TARGET_PREFIX + "this site"), null);
       clearRowPaint();
       clearZipPaint();
@@ -5313,6 +5647,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     }
     function play() {
       stopPicking();
+      clearPreview();
       if (mode === "click") {
         zipRunner.play();
         return;
@@ -5400,11 +5735,20 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       if (clickControls().length) return "click";
       return "tick";
     }
+    function variantCounts() {
+      if (!learnedHere) return null;
+      const withKind = Object.assign({}, targetRecord, { variantOn: true });
+      const kind = keepPlaces(lookAlikes().filter((el) => matchesTarget(el, withKind)), withKind.variant).length;
+      return { on: targetRecord.variantOn !== false, kind, all: lookAlikes().length };
+    }
     function build() {
       view = createBatchPanel({
         mode,
         kind: learnedHere ? targetRecord.kind : null,
         onKind: setKind,
+        variant: variantCounts(),
+        onVariant: setVariantOn,
+        onRefine: refine,
         batchSize,
         startAt: readStart(storage, keyFor2(startKey, START_PREFIX + "this site")),
         limit: readZipLimit(storage, keyFor2(zipLimitKey, ZIP_LIMIT_PREFIX + "this site")),
@@ -5446,6 +5790,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
         watchCounts();
       }
       showCounts();
+      showPreview();
     }
     function first() {
       if (mode === "click") {
@@ -5471,6 +5816,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
         watchZip();
       } else watchCounts();
       showCounts();
+      showPreview();
       first();
       rescans = [1500, 4e3, 8e3].map((wait) => setTimeout(() => {
         try {
@@ -5516,6 +5862,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       countsTimer = null;
       clearRowPaint();
       clearZipPaint();
+      clearPreview();
       if (view) view.el.remove();
       view = null;
       opened = false;
@@ -5526,6 +5873,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       if (view) view.el.remove();
       build();
       showCounts();
+      showPreview();
     }
     function resume() {
       if (!readZipAuto(storage, autoKey(), Date.now())) return false;

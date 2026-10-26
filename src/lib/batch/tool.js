@@ -25,7 +25,7 @@ import {
   isAddText, isInZipText, zipLedgerKey, openZipStore, zipCounts, zipAddedCount, zipSummary,
 } from "./runner.js";
 import { createBatchPanel, makeDraggable } from "./panel.js";
-import { narrowRecord, refineRecord, bySlot } from "./variant.js";
+import { narrowRecord, refineRecord, bySlot, hasSlot } from "./variant.js";
 import { findNextControls } from "./pager.js";
 
 // The mark left on a row once the ledger knows it, and on an item once handled.
@@ -104,7 +104,7 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window, onStep
   function makeReader() {
     learnedHere = !!targetRecord && learnedMatches().length > 0;
     const source = learnedHere && targetRecord.kind === "box"
-      ? learnedSource(document, targetRecord, matchesTarget, isOurs, (list) => bySlot(list, kindNow()))
+      ? learnedSource(document, targetRecord, matchesTarget, isOurs, (list) => keepPlaces(list))
       : autoSource(document, isOurs);
     reader = createRowReader(document, { now: () => Date.now(), source });
   }
@@ -115,6 +115,11 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window, onStep
   // The kind in force: the picked one's, unless the person chose all alike.
   function kindNow() {
     return targetRecord && targetRecord.variantOn !== false ? targetRecord.variant || null : null;
+  }
+
+  // Of matches, those in their kind's place in a card, where a kind has one.
+  function keepPlaces(matched, variant = kindNow()) {
+    return hasSlot(variant) ? bySlot(matched, variant, lookAlikes()) : matched;
   }
 
   // Every look-alike of the picked item, whatever its kind.
@@ -129,7 +134,7 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window, onStep
     if (!targetRecord) return [];
     const matched = Array.from(document.getElementsByTagName(targetRecord.tag))
       .filter((el) => !isOurs(el) && matchesTarget(el, targetRecord));
-    return bySlot(matched, kindNow());
+    return keepPlaces(matched);
   }
   makeReader();
 
@@ -1087,7 +1092,6 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window, onStep
 
   // Refine: each click on a green one leaves its kind out, each click on an
   // unmarked look-alike takes its kind in, until Done.
-  let refineNodes = [];
   function refineWith(target) {
     const found = resolveTarget(target);
     const alike = lookAlikes();
@@ -1097,8 +1101,7 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window, onStep
     }
     const wanted = learnedMatches().indexOf(found.node) < 0;
     const before = learnedMatches().length;
-    if (wanted) refineNodes.push(found.node);
-    targetRecord = refineRecord(Object.assign({}, targetRecord, { variantOn: true }), found.node, wanted, alike, refineNodes);
+    targetRecord = refineRecord(Object.assign({}, targetRecord, { variantOn: true }), found.node, wanted, alike);
     saveTarget();
     clearRowPaint();
     clearZipPaint();
@@ -1116,7 +1119,6 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window, onStep
     if (busy()) { say("Stop the run first."); return; }
     if (!learnedHere) { say("Pick an item on this page first."); return; }
     stopPicking();
-    refineNodes = [];
     picking = "refine";
     labelPickers();
     document.addEventListener("mouseover", onHover, true);
@@ -1311,7 +1313,7 @@ export function createBatchTool({ version = "0.0.0", pageWindow = window, onStep
   function variantCounts() {
     if (!learnedHere) return null;
     const withKind = Object.assign({}, targetRecord, { variantOn: true });
-    const kind = bySlot(lookAlikes().filter((el) => matchesTarget(el, withKind)), withKind.variant).length;
+    const kind = keepPlaces(lookAlikes().filter((el) => matchesTarget(el, withKind)), withKind.variant).length;
     return { on: targetRecord.variantOn !== false, kind, all: lookAlikes().length };
   }
 
