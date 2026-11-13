@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Popup Zapper
 // @namespace    https://github.com/EJR-of-Scrutopia/popup-zapper
-// @version      2.4.0
+// @version      2.5.0
 // @description  Remove login/consent/newsletter/paywall popups, reveal blurred/gated content, defeat reload traps, learn popups by click, click many checkboxes or buttons in batches, and record one item's clicks to repeat for every item in a list.
 // @author       Param
 // @homepageURL  https://github.com/EJR-of-Scrutopia/popup-zapper
@@ -39,7 +39,8 @@
     disabledDomains: [],
     global: [],
     domains: {},
-    whitelist: []
+    whitelist: [],
+    instagram: { mode: "auto", view: "ours" }
   };
   function parseLibrary(raw) {
     if (!raw) return clone(DEFAULT_LIBRARY);
@@ -3745,7 +3746,8 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     onCopyUpdate,
     onShowLog,
     onDiagnostics,
-    onClose
+    onClose,
+    onSetInstagram
   }) {
     const t = palette();
     const panel = own(tag("div", { className: PREFIX2 + "settings" }), "settings");
@@ -3823,6 +3825,40 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       });
       themeRow.appendChild(seg);
       panel.appendChild(themeRow);
+    }
+    if (onSetInstagram && hostname2 === "instagram.com") {
+      const ig = library2 && library2.instagram || {};
+      const row3 = (label, act, choices, current, key) => {
+        const r = tag("div");
+        r.style.cssText = `display:flex;gap:8px;align-items:center;margin:10px 0 4px;border-top:1px solid ${t.border};padding-top:8px;`;
+        r.appendChild(tag("span", { textContent: label, style: `flex:1;color:${t.sub};` }));
+        const seg = tag("div");
+        seg.style.cssText = `display:flex;border:1px solid ${t.border};border-radius:6px;overflow:hidden;`;
+        choices.forEach(([value, text], i) => {
+          const on = current === value;
+          const b = tag("button", { textContent: text });
+          b.setAttribute("data-act", `${act}-${value}`);
+          b.style.cssText = "border:0;padding:3px 10px;cursor:pointer;font:12px sans-serif;" + (i ? `border-left:1px solid ${t.border};` : "") + (on ? `background:${t.accent};color:#fff;font-weight:bold;` : `background:${t.head};color:${t.fg};`);
+          if (!on) b.addEventListener("click", () => onSetInstagram({ [key]: value }));
+          seg.appendChild(b);
+        });
+        r.appendChild(seg);
+        panel.appendChild(r);
+      };
+      row3(
+        "Instagram posts",
+        "ig-mode",
+        [["auto", "Signed out"], ["on", "Always"], ["off", "Never"]],
+        ig.mode || "auto",
+        "mode"
+      );
+      row3(
+        "Open them in",
+        "ig-view",
+        [["ours", "Our view"], ["embed", "Instagram's"]],
+        ig.view || "ours",
+        "view"
+      );
     }
     const u = update || { state: "idle" };
     const verRow = tag("div");
@@ -4641,14 +4677,14 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     let countsTimer = null;
     function countsSoon() {
       if (countsTimer || !opened) return;
-      const wait = Math.max(0, countsAt + 1e3 - Date.now());
+      const wait2 = Math.max(0, countsAt + 1e3 - Date.now());
       countsTimer = setTimeout(() => {
         countsTimer = null;
         try {
           showCounts();
         } catch {
         }
-      }, wait);
+      }, wait2);
     }
     function showCounts(rows) {
       if (!opened || !view) return;
@@ -5818,7 +5854,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       showCounts();
       showPreview();
       first();
-      rescans = [1500, 4e3, 8e3].map((wait) => setTimeout(() => {
+      rescans = [1500, 4e3, 8e3].map((wait2) => setTimeout(() => {
         try {
           if (!opened || busy() || picking) return;
           const was = { mode, learnedHere };
@@ -5833,7 +5869,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
           }
         } catch {
         }
-      }, wait));
+      }, wait2));
     }
     function close() {
       if (!opened) return true;
@@ -5890,7 +5926,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
         }
       };
       tryPlay();
-      for (const wait of [1500, 4e3, 8e3]) setTimeout(tryPlay, wait);
+      for (const wait2 of [1500, 4e3, 8e3]) setTimeout(tryPlay, wait2);
       return true;
     }
     return {
@@ -7789,6 +7825,595 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     };
   }
 
+  // src/lib/instagram/shortcode.js
+  var SHORTCODE = /\/(?:p|reel|tv)\/([A-Za-z0-9_-]+)/;
+  function shortcodeFromPath(path) {
+    if (typeof path !== "string" || !path) return null;
+    const m = SHORTCODE.exec(path);
+    return m && m[1] ? m[1] : null;
+  }
+  function shortcodeFromAnchor(el) {
+    if (!el || el.nodeType !== 1) return null;
+    const a = typeof el.closest === "function" ? el.closest("a[href]") : null;
+    if (!a) return null;
+    return shortcodeFromPath(a.getAttribute("href"));
+  }
+  function embedUrl(shortcode) {
+    return `https://www.instagram.com/p/${shortcode}/embed/captioned/`;
+  }
+
+  // src/lib/instagram/prefs.js
+  var DEFAULT_INSTAGRAM = { mode: "auto", view: "ours" };
+  var HOST = "instagram.com";
+  function readPrefs(library2) {
+    const stored = library2 && typeof library2.instagram === "object" && library2.instagram ? library2.instagram : {};
+    return { ...DEFAULT_INSTAGRAM, ...stored };
+  }
+  function writePrefs(library2, patch) {
+    if (!library2) return library2;
+    library2.instagram = { ...readPrefs(library2), ...patch };
+    return library2;
+  }
+  function isSignedIn(cookie) {
+    if (typeof cookie !== "string" || !cookie) return false;
+    return /(?:^|;\s*)ds_user_id=([^;]+)/.test(cookie);
+  }
+  function isActive({ library: library2, hostname: hostname2, cookie }) {
+    if (!library2 || library2.enabled === false) return false;
+    if (hostname2 !== HOST) return false;
+    if ((library2.disabledDomains || []).includes(HOST)) return false;
+    const { mode } = readPrefs(library2);
+    if (mode === "off") return false;
+    if (mode === "on") return true;
+    return !isSignedIn(cookie);
+  }
+
+  // src/lib/instagram/embed.js
+  var MEDIA_IMG = "img.EmbeddedMediaImage";
+  var AVATAR = /t51\.2885-19/;
+  function readEmbedDoc(doc) {
+    if (!doc || !doc.querySelector) return null;
+    const media = readMedia(doc);
+    if (!media) return null;
+    const hasMore = !!doc.querySelector('[aria-label="Next"], [aria-label="Next slide"]');
+    const kind = media.type === "video" ? "video" : hasMore ? "carousel" : "photo";
+    return {
+      kind,
+      media: [media],
+      hasMore,
+      caption: readCaption(doc),
+      author: readAuthor(doc),
+      source: "dom"
+    };
+  }
+  function readMedia(doc) {
+    const video = doc.querySelector("video");
+    if (video) {
+      const url2 = video.getAttribute("src") || srcOf(video.querySelector("source")) || null;
+      const poster = video.getAttribute("poster") || null;
+      if (url2 || poster) return { type: "video", url: url2, poster, index: 0 };
+    }
+    const img = doc.querySelector(MEDIA_IMG) || largestOtherImage(doc);
+    if (!img) return null;
+    const url = srcOf(img);
+    if (!url || AVATAR.test(url)) return null;
+    return { type: "image", url, poster: null, index: 0 };
+  }
+  function largestOtherImage(doc) {
+    const imgs = [...doc.querySelectorAll("img")].filter((i) => {
+      const s = srcOf(i);
+      return s && !AVATAR.test(s);
+    });
+    return imgs[0] || null;
+  }
+  function srcOf(el) {
+    if (!el) return null;
+    const set = el.getAttribute && el.getAttribute("srcset");
+    if (set) {
+      const best = set.split(",").map((part) => part.trim().split(/\s+/)).map(([url, size]) => ({ url, w: parseInt(size, 10) || 0 })).sort((a, b) => b.w - a.w)[0];
+      if (best && best.url) return best.url;
+    }
+    return el.getAttribute && el.getAttribute("src") || null;
+  }
+  function readCaption(doc) {
+    const node = doc.querySelector(".Caption");
+    if (!node) return "";
+    const copy = node.cloneNode(true);
+    for (const drop of copy.querySelectorAll(".CaptionUsername, .CaptionComments, .CaptionCommentsExpand")) {
+      drop.remove();
+    }
+    return (copy.textContent || "").replace(/\s+/g, " ").trim();
+  }
+  function readAuthor(doc) {
+    const name = doc.querySelector(".UsernameText") || doc.querySelector(".Username");
+    const avatarImg = doc.querySelector(".Avatar img, .AvatarContainer img");
+    return {
+      username: (name && name.textContent || "").trim(),
+      avatar: srcOf(avatarImg)
+    };
+  }
+
+  // src/lib/instagram/loader.js
+  var REASONS = {
+    login: "Instagram asked that one to log in. Its own view may still show it.",
+    blank: "That post is not available without an account.",
+    unreadable: "Could not read that post's frame. Try Instagram's own view.",
+    empty: "No post to open."
+  };
+  async function loadPost(shortcode, { doc, timeoutMs = 2e4, pollMs = 150 } = {}) {
+    if (!shortcode || !doc) return { ok: false, reason: REASONS.empty };
+    const frame = doc.createElement("iframe");
+    frame.setAttribute("aria-hidden", "true");
+    frame.setAttribute("tabindex", "-1");
+    Object.assign(frame.style, {
+      position: "fixed",
+      left: "-10000px",
+      top: "0",
+      width: "1000px",
+      height: "1400px",
+      border: "0",
+      opacity: "0",
+      pointerEvents: "none"
+    });
+    frame.setAttribute("src", embedUrl(shortcode));
+    frame.src = embedUrl(shortcode);
+    const mount = doc.body || doc.documentElement;
+    mount.appendChild(frame);
+    try {
+      const deadline = Date.now() + timeoutMs;
+      let sawLogin = false;
+      for (; ; ) {
+        let post = null;
+        try {
+          if (atLogin(frame)) sawLogin = true;
+          const inner = frame.contentDocument;
+          if (inner) post = readEmbedDoc(inner);
+        } catch {
+          return { ok: false, reason: REASONS.unreadable };
+        }
+        if (post) return { ok: true, post };
+        if (Date.now() >= deadline) {
+          return { ok: false, reason: sawLogin ? REASONS.login : REASONS.blank };
+        }
+        await wait(pollMs);
+      }
+    } finally {
+      try {
+        frame.remove();
+      } catch {
+      }
+    }
+  }
+  function atLogin(frame) {
+    const href = frame.contentWindow && frame.contentWindow.location && frame.contentWindow.location.href;
+    return typeof href === "string" && /\/accounts\/login/.test(href);
+  }
+  function wait(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  // src/lib/instagram/lightbox.js
+  var CSS = `
+:host { all: initial; }
+.backdrop {
+  position: fixed; inset: 0; z-index: 2147483647;
+  background: rgba(0,0,0,.92);
+  display: flex; align-items: center; justify-content: center;
+  font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #f2f2f2;
+}
+.sheet {
+  display: flex; flex-direction: column; align-items: center;
+  max-width: 96vw; max-height: 96vh; gap: 10px;
+}
+.stage {
+  display: flex; align-items: center; justify-content: center;
+  max-width: 96vw; max-height: 78vh; overflow: auto;
+}
+img[data-pz-media], video { max-width: 96vw; max-height: 78vh; display: block; border-radius: 4px; }
+img[data-pz-zoom="1"] { max-width: none; max-height: none; cursor: zoom-out; }
+img[data-pz-zoom="0"] { cursor: zoom-in; }
+iframe { width: min(96vw, 500px); height: min(90vh, 860px); border: 0; background: #fff; border-radius: 4px; }
+.bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.meta { max-width: min(96vw, 680px); text-align: center; }
+.who { font-weight: 600; }
+.caption { color: #cfcfcf; margin-top: 3px; max-height: 5.5em; overflow: auto; }
+.note { color: #ffd479; margin-top: 4px; }
+button, a.btn {
+  border: 1px solid #4a4a4a; background: #222; color: #f2f2f2;
+  border-radius: 5px; padding: 4px 10px; cursor: pointer;
+  font: 12px sans-serif; text-decoration: none;
+}
+button:hover, a.btn:hover { background: #333; }
+.msg { font-size: 14px; text-align: center; max-width: 60ch; }
+`;
+  function createLightbox({ doc, shortcode, onClose, onStep, onSave, onViewChange }) {
+    let host = null;
+    let rootEl = null;
+    let body = null;
+    let zoom = false;
+    function onKey(e) {
+      if (e.key === "Escape") {
+        call(onClose);
+        return;
+      }
+      if (e.key === "ArrowRight") {
+        call(onStep, 1);
+        return;
+      }
+      if (e.key === "ArrowLeft") {
+        call(onStep, -1);
+      }
+    }
+    function open() {
+      if (host) return api;
+      host = doc.createElement("div");
+      host.setAttribute("data-pz", "instagram-viewer");
+      rootEl = host.attachShadow({ mode: "open" });
+      const style = doc.createElement("style");
+      style.textContent = CSS;
+      rootEl.appendChild(style);
+      const backdrop = doc.createElement("div");
+      backdrop.className = "backdrop";
+      backdrop.setAttribute("data-pz-backdrop", "");
+      backdrop.addEventListener("click", (e) => {
+        if (e.target === backdrop) call(onClose);
+      });
+      body = doc.createElement("div");
+      body.className = "sheet";
+      backdrop.appendChild(body);
+      rootEl.appendChild(backdrop);
+      (doc.body || doc.documentElement).appendChild(host);
+      doc.addEventListener("keydown", onKey, true);
+      return api;
+    }
+    function close() {
+      if (!host) return;
+      doc.removeEventListener("keydown", onKey, true);
+      try {
+        host.remove();
+      } catch {
+      }
+      host = null;
+      rootEl = null;
+      body = null;
+      zoom = false;
+    }
+    function clear() {
+      if (!body) return;
+      while (body.firstChild) body.removeChild(body.firstChild);
+    }
+    function el(tag2, props = {}, parent = null) {
+      const n = doc.createElement(tag2);
+      for (const [k, v] of Object.entries(props)) {
+        if (v === null || v === void 0) continue;
+        if (k === "class" || k === "text") continue;
+        n.setAttribute(k, v);
+      }
+      if (props.class) n.className = props.class;
+      if (props.text) n.textContent = props.text;
+      if (parent) parent.appendChild(n);
+      return n;
+    }
+    function viewBar(parent, current) {
+      const bar = el("div", { class: "bar" }, parent);
+      const other = current === "ours" ? "embed" : "ours";
+      el("button", {
+        "data-pz-view-toggle": "",
+        text: current === "ours" ? "Instagram's own view" : "Our view"
+      }, bar).addEventListener("click", () => call(onViewChange, other));
+      el("a", {
+        class: "btn",
+        href: `https://www.instagram.com/p/${shortcode}/`,
+        target: "_blank",
+        rel: "noopener",
+        text: "Open on Instagram"
+      }, bar);
+      return bar;
+    }
+    function showFrame(parent) {
+      el("iframe", { src: embedUrl(shortcode), loading: "eager" }, parent);
+    }
+    function showPost(post, { view = "ours" } = {}) {
+      if (!host) open();
+      clear();
+      zoom = false;
+      const useFrame = view === "embed" || post.kind === "carousel";
+      const stage = el("div", { class: "stage" }, body);
+      if (useFrame) {
+        showFrame(stage);
+      } else {
+        const item = post.media[0];
+        if (item.type === "video" && item.url) {
+          el("video", { src: item.url, poster: item.poster, controls: "", playsinline: "", autoplay: "" }, stage);
+        } else {
+          const src = item.type === "video" ? item.poster : item.url;
+          const image = el("img", { "data-pz-media": "", "data-pz-zoom": "0", src, alt: post.caption || "Instagram post" }, stage);
+          image.addEventListener("click", () => {
+            zoom = !zoom;
+            image.setAttribute("data-pz-zoom", zoom ? "1" : "0");
+          });
+        }
+      }
+      const meta = el("div", { class: "meta" }, body);
+      if (post.author && post.author.username) el("div", { class: "who", text: post.author.username }, meta);
+      if (post.caption) el("div", { class: "caption", text: post.caption }, meta);
+      if (post.kind === "carousel") {
+        el("div", { class: "note", text: "This post has more pictures. Instagram's own arrows step through them." }, meta);
+      }
+      if (post.kind === "video" && !post.media[0].url) {
+        el("div", { class: "note", text: "The video itself is not available without an account. This is its cover frame." }, meta);
+        el("button", { "data-pz-show-frame": "", text: "Show Instagram's own view" }, meta).addEventListener("click", () => {
+          clear();
+          showFrame(el("div", { class: "stage" }, body));
+          viewBar(body, "embed");
+        });
+      }
+      const bar = viewBar(body, useFrame ? "embed" : "ours");
+      if (!useFrame && post.media[0].url) {
+        el("button", { "data-pz-save": "", text: "Save" }, bar).addEventListener("click", () => call(onSave, post.media[0]));
+      }
+    }
+    function showMessage(reason) {
+      if (!host) open();
+      clear();
+      el("div", { class: "msg", text: reason }, body);
+      const bar = el("div", { class: "bar" }, body);
+      el("button", { "data-pz-show-frame": "", text: "Show Instagram's own view" }, bar).addEventListener("click", () => {
+        clear();
+        showFrame(el("div", { class: "stage" }, body));
+        viewBar(body, "embed");
+      });
+      el("a", {
+        class: "btn",
+        href: `https://www.instagram.com/p/${shortcode}/`,
+        target: "_blank",
+        rel: "noopener",
+        text: "Open on Instagram"
+      }, bar);
+    }
+    const api = {
+      open,
+      close,
+      showPost,
+      showMessage,
+      isOpen: () => !!host,
+      get el() {
+        return host;
+      }
+    };
+    return api;
+  }
+  function call(fn, arg) {
+    if (typeof fn === "function") fn(arg);
+  }
+
+  // src/lib/instagram/save.js
+  var IMAGE_EXT = /* @__PURE__ */ new Set(["jpg", "jpeg", "png", "webp", "heic", "gif"]);
+  var VIDEO_EXT = /* @__PURE__ */ new Set(["mp4", "mov", "webm", "m4v"]);
+  function fileNameFor(item, shortcode) {
+    const stem = item.index ? `instagram-${shortcode}-${item.index}` : `instagram-${shortcode}`;
+    return `${stem}.${extensionFor(item)}`;
+  }
+  function extensionFor(item) {
+    const fallback = item.type === "video" ? "mp4" : "jpg";
+    const allowed = item.type === "video" ? VIDEO_EXT : IMAGE_EXT;
+    const path = String(item.url || "").split("?")[0];
+    const dot = path.lastIndexOf(".");
+    if (dot < 0) return fallback;
+    const ext = path.slice(dot + 1).toLowerCase();
+    return allowed.has(ext) ? ext : fallback;
+  }
+  async function saveMedia(item, { shortcode, gmXhr, doc }) {
+    if (!item || !item.url) return { ok: false, reason: "There is nothing to save for this post." };
+    let blob;
+    try {
+      blob = await fetchBlob(item.url, gmXhr);
+    } catch (err) {
+      return { ok: false, reason: err.message };
+    }
+    const href = URL.createObjectURL(blob);
+    try {
+      const a = doc.createElement("a");
+      a.setAttribute("href", href);
+      a.setAttribute("download", fileNameFor(item, shortcode));
+      a.style.display = "none";
+      doc.body.appendChild(a);
+      a.click();
+      a.remove();
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, reason: `Could not save that file: ${err.message}` };
+    } finally {
+      URL.revokeObjectURL(href);
+    }
+  }
+  function fetchBlob(url, gmXhr) {
+    return new Promise((resolve, reject) => {
+      try {
+        gmXhr({
+          method: "GET",
+          url,
+          responseType: "blob",
+          anonymous: true,
+          onload: (res) => {
+            if (res.status >= 200 && res.status < 300 && res.response) resolve(res.response);
+            else reject(new Error(`Could not fetch that file (${res.status}).`));
+          },
+          onerror: () => reject(new Error("Could not reach Instagram's servers for that file.")),
+          ontimeout: () => reject(new Error("Timed out fetching that file."))
+        });
+      } catch (err) {
+        reject(new Error(`Could not fetch that file: ${err.message}`));
+      }
+    });
+  }
+
+  // src/lib/instagram/tool.js
+  var TILE = "a[href*='/p/'], a[href*='/reel/'], a[href*='/tv/']";
+  function createInstagramTool({
+    doc,
+    win,
+    ready,
+    getCookie = () => doc.cookie,
+    saveLibrary: saveLibrary2 = () => {
+    },
+    gmXhr,
+    loadPost: loadPost2 = loadPost,
+    createLightbox: createLightbox2 = createLightbox
+  }) {
+    let library2 = null;
+    let resolved = false;
+    let box = null;
+    let current = null;
+    let pending = null;
+    let running = false;
+    const readyPromise = Promise.resolve(ready).then((lib) => {
+      library2 = lib;
+      resolved = true;
+      return lib;
+    });
+    function active() {
+      return isActive({
+        library: library2,
+        hostname: "instagram.com",
+        cookie: safeCookie()
+      });
+    }
+    function safeCookie() {
+      try {
+        return getCookie() || "";
+      } catch {
+        return "";
+      }
+    }
+    function isPlainLeftClick(e) {
+      return e.button === 0 && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey;
+    }
+    function onClick(e) {
+      if (!isPlainLeftClick(e)) return;
+      const code = shortcodeFromAnchor(e.target);
+      if (!code) return;
+      if (!resolved) {
+        const anchor = e.target.closest && e.target.closest("a[href]");
+        const href = anchor && anchor.getAttribute("href");
+        e.preventDefault();
+        e.stopPropagation();
+        pending = { code, href };
+        return;
+      }
+      if (!active()) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openShortcode(code);
+    }
+    function settlePending() {
+      const held = pending;
+      pending = null;
+      if (!held) return;
+      if (active()) openShortcode(held.code);
+      else if (held.href) win.location.href = held.href;
+    }
+    function tiles() {
+      const out = [];
+      const seen = /* @__PURE__ */ new Set();
+      for (const a of doc.querySelectorAll(TILE)) {
+        const code = shortcodeFromPath(a.getAttribute("href"));
+        if (code && !seen.has(code)) {
+          seen.add(code);
+          out.push(code);
+        }
+      }
+      return out;
+    }
+    async function step(direction) {
+      if (!current) return;
+      const all = tiles();
+      const at = all.indexOf(current);
+      if (at < 0) return;
+      const next = all[at + direction];
+      if (!next) return;
+      await openShortcode(next);
+    }
+    function ensureBox(code) {
+      if (box) box.close();
+      box = createLightbox2({
+        doc,
+        shortcode: code,
+        onClose: close,
+        onStep: step,
+        onSave: (item) => saveMedia(item, { shortcode: current, gmXhr, doc }),
+        onViewChange: (view) => {
+          if (library2) {
+            writePrefs(library2, { view });
+            saveLibrary2(library2);
+          }
+          if (box && lastPost) box.showPost(lastPost, { view });
+        }
+      });
+      box.open();
+      return box;
+    }
+    let lastPost = null;
+    async function openShortcode(code) {
+      if (!code || code === current || running) return;
+      running = true;
+      current = code;
+      lastPost = null;
+      try {
+        await readyPromise;
+        const view = readPrefs(library2).view;
+        ensureBox(code);
+        const res = await loadPost2(code, { doc });
+        if (current !== code) return;
+        if (res.ok) {
+          lastPost = res.post;
+          box.showPost(res.post, { view });
+        } else box.showMessage(res.reason);
+      } finally {
+        running = false;
+      }
+    }
+    function close() {
+      if (box) box.close();
+      box = null;
+      current = null;
+      lastPost = null;
+    }
+    let lastPathCode = null;
+    function checkLocation() {
+      if (!active()) return;
+      const code = shortcodeFromPath(win.location.pathname);
+      if (code) openShortcode(code);
+      else if (lastPathCode && box) close();
+      lastPathCode = code;
+    }
+    function onPopState() {
+      checkLocation();
+    }
+    function whenMountable(fn) {
+      if (doc.body) {
+        fn();
+        return;
+      }
+      doc.addEventListener("DOMContentLoaded", fn, { once: true });
+    }
+    function start() {
+      doc.addEventListener("click", onClick, true);
+      win.addEventListener("popstate", onPopState);
+      readyPromise.then(() => {
+        settlePending();
+        whenMountable(checkLocation);
+      });
+    }
+    function stop() {
+      doc.removeEventListener("click", onClick, true);
+      win.removeEventListener("popstate", onPopState);
+      close();
+    }
+    return { start, stop, openShortcode, isActive: active, ready: readyPromise };
+  }
+
   // src/main.js
   var gm = createGm();
   var hostname = location.hostname.replace(/^www\./, "");
@@ -7799,10 +8424,23 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
   var persist = () => {
     saveLibrary((k, v) => gm.set(k, v), library);
   };
+  var settleLibrary;
+  var libraryReady = new Promise((resolve) => {
+    settleLibrary = resolve;
+  });
   var activityLog = createActivityLog();
   var undo = createUndoStack();
   var pageWindow = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
   var recorder = createRecorderTool({ gm, pageWindow, version: VERSION });
+  var instagram = createInstagramTool({
+    doc: document,
+    win: window,
+    ready: libraryReady,
+    getCookie: () => document.cookie,
+    saveLibrary: () => persist(),
+    gmXhr: (details) => gm.xhr(details)
+  });
+  if (hostname === "instagram.com") instagram.start();
   var batch = createBatchTool({
     version: VERSION,
     pageWindow,
@@ -8146,6 +8784,11 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       hostname,
       version: VERSION,
       theme: getTheme(),
+      onSetInstagram: (patch) => {
+        writePrefs(library, patch);
+        persist();
+        reopenSettings();
+      },
       onToggleRule: ({ rule, enabled }) => {
         rule.enabled = enabled;
         persist();
@@ -8276,6 +8919,13 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     if (settingsPanel) reopenSettings();
     if (logPanel) renderLogPanel();
   }
+  function toggleInstagramView() {
+    if (!library) return;
+    const next = readPrefs(library).view === "ours" ? "embed" : "ours";
+    writePrefs(library, { view: next });
+    persist();
+    setStatus(next === "ours" ? "Instagram posts open in our view" : "Instagram posts open in Instagram's view");
+  }
   try {
     GM_registerMenuCommand("Block a popup", startBlock);
     GM_registerMenuCommand("Remove paywall", doRemovePaywall);
@@ -8287,12 +8937,14 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     });
     GM_registerMenuCommand("Settings", toggleSettings);
     GM_registerMenuCommand("Toggle zapper (this site)", toggleSite);
+    if (hostname === "instagram.com") GM_registerMenuCommand("Instagram view", toggleInstagramView);
   } catch {
   }
   installReloadDefense();
   async function bootAsync() {
     setTouch(detectTouch());
     library = await loadLibraryAsync((k) => gm.get(k));
+    settleLibrary(library);
     setTheme(await gm.get(THEME_KEY, "auto"));
     const start = () => {
       runOnce();
