@@ -7,6 +7,7 @@ export const DEFAULT_LIBRARY = {
   global: [],
   domains: {},
   whitelist: [],
+  instagram: { mode: "auto", view: "ours" },
 };
 
 export function parseLibrary(raw) {

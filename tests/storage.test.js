@@ -44,6 +44,15 @@ describe("parseLibrary", () => {
     expect(lib.global).toHaveLength(1);
     expect(lib.domains).toEqual({});
   });
+  it("gives an older stored library the instagram defaults without resetting it", () => {
+    const lib = parseLibrary(JSON.stringify({ version: 1, enabled: true, global: [{ type: "id", value: "keep" }] }));
+    expect(lib.instagram).toEqual({ mode: "auto", view: "ours" });
+    expect(lib.global).toEqual([{ type: "id", value: "keep" }]);
+  });
+  it("keeps a stored instagram preference", () => {
+    const lib = parseLibrary(JSON.stringify({ version: 1, instagram: { mode: "on", view: "embed" } }));
+    expect(lib.instagram).toEqual({ mode: "on", view: "embed" });
+  });
 });
 
 describe("loadLibraryAsync", () => {
