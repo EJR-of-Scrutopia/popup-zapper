@@ -139,11 +139,18 @@ async function main() {
     await page.keyboard.press("Escape");
 
     // --- a ctrl-click is left alone ---
-    await page.keyboard.down("Control");
+    // Proved by contrast: a plain click on the same tile must open the viewer
+    // straight afterwards, so this cannot pass merely because nothing is open.
+    await page.goto(PROFILE, { waitUntil: "domcontentloaded" });
     await page.click("a[data-code='AAphoto1']", { modifiers: ["Control"] });
-    await page.keyboard.up("Control");
-    await page.waitForTimeout(600);
+    await page.waitForTimeout(800);
     check((await overlay(page)) === null, "a ctrl-click does not open the viewer");
+    check((await wallUp(page)) === true, "and the site's own handler sees it");
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.click("a[data-code='AAphoto1']");
+    await waitForOverlay(page);
+    check((await overlay(page)) !== null, "while a plain click on that same tile does");
+    await page.keyboard.press("Escape");
 
     // --- a post URL opened directly ---
     await page.goto("https://www.instagram.com/p/BBphoto2/", { waitUntil: "domcontentloaded" });

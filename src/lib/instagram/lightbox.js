@@ -78,7 +78,21 @@ export function createLightbox({ doc, shortcode, onClose, onStep, onSave, onView
 
     (doc.body || doc.documentElement).appendChild(host);
     doc.addEventListener("keydown", onKey, true);
+    // Never leave a bare black screen: whoever opened us is about to fetch, and
+    // that can take seconds or fail outright.
+    showLoading();
     return api;
+  }
+
+  function showLoading() {
+    if (!body) return;
+    clear();
+    el("div", { class: "msg", text: "Opening this post…" }, body);
+    const bar = el("div", { class: "bar" }, body);
+    el("button", { "data-pz-show-frame": "", text: "Show Instagram's own view" }, bar)
+      .addEventListener("click", () => { clear(); showFrame(el("div", { class: "stage" }, body)); viewBar(body, "embed"); });
+    el("button", { "data-pz-cancel": "", text: "Close" }, bar)
+      .addEventListener("click", () => call(onClose));
   }
 
   function close() {
@@ -158,7 +172,12 @@ export function createLightbox({ doc, shortcode, onClose, onStep, onSave, onView
     if (post.caption) el("div", { class: "caption", text: post.caption }, meta);
 
     if (post.kind === "carousel") {
-      el("div", { class: "note", text: "This post has more pictures. Instagram's own arrows step through them." }, meta);
+      // Say why this one ignored the chosen view, so the toggle does not look
+      // broken when it changes the preference but not this post.
+      const why = view === "ours"
+        ? "This post has more pictures, and our view cannot step through a carousel, so it stays in Instagram's. Other posts still open in our view."
+        : "This post has more pictures. Instagram's own arrows step through them.";
+      el("div", { class: "note", text: why }, meta);
     }
     if (post.kind === "video" && !post.media[0].url) {
       el("div", { class: "note", text: "The video itself is not available without an account. This is its cover frame." }, meta);
@@ -171,6 +190,18 @@ export function createLightbox({ doc, shortcode, onClose, onStep, onSave, onView
       el("button", { "data-pz-save": "", text: "Save" }, bar)
         .addEventListener("click", () => call(onSave, post.media[0]));
     }
+  }
+
+  // A line added beside what is already on screen, for something that went
+  // wrong without the post itself going wrong: a failed save, most often.
+  function showNote(message) {
+    if (!body) return;
+    let note = rootEl.querySelector("[data-pz-note]");
+    if (!note) {
+      note = el("div", { class: "note", "data-pz-note": "" });
+      body.appendChild(note);
+    }
+    note.textContent = message;
   }
 
   function showMessage(reason) {
@@ -192,8 +223,10 @@ export function createLightbox({ doc, shortcode, onClose, onStep, onSave, onView
   const api = {
     open,
     close,
+    showLoading,
     showPost,
     showMessage,
+    showNote,
     isOpen: () => !!host,
     get el() { return host; },
   };

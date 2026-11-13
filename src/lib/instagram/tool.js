@@ -9,7 +9,7 @@
 // arrives it either opens the viewer or replays the navigation it prevented.
 
 import { shortcodeFromAnchor, shortcodeFromPath } from "./shortcode.js";
-import { readPrefs, writePrefs, isActive } from "./prefs.js";
+import { readPrefs, writePrefs, isActive, isSignedIn } from "./prefs.js";
 import { loadPost as realLoadPost } from "./loader.js";
 import { createLightbox as realCreateLightbox } from "./lightbox.js";
 import { saveMedia } from "./save.js";
@@ -31,7 +31,12 @@ export function createInstagramTool({
   let box = null;
   let current = null;
   let pending = null;
-  let running = false;
+  let currentFailed = false;
+  // Every open gets a token. A load whose token has moved on is stale and must
+  // not paint. This replaces an "is a load running" flag, which made every
+  // click and arrow key a silent no-op for as long as a load took, after the
+  // click had already been swallowed.
+  let token = 0;
 
   const readyPromise = Promise.resolve(ready).then((lib) => {
     library = lib;
@@ -60,6 +65,14 @@ export function createInstagramTool({
     if (!isPlainLeftClick(e)) return;
     const code = shortcodeFromAnchor(e.target);
     if (!code) return;
+
+    if (!resolved && isSignedIn(safeCookie())) {
+      // Signed in: under the default mode we would not act anyway, and holding
+      // a click only to replay it as a full page load is worse than leaving
+      // the site alone. Someone who has set "Always" loses the one click that
+      // lands inside the boot window, and gets Instagram's own behaviour.
+      return;
+    }
 
     if (!resolved) {
       // Hold it: we do not yet know whether we are entitled to it.
@@ -114,7 +127,12 @@ export function createInstagramTool({
       shortcode: code,
       onClose: close,
       onStep: step,
-      onSave: (item) => saveMedia(item, { shortcode: current, gmXhr, doc }),
+      onSave: async (item) => {
+        const res = await saveMedia(item, { shortcode: current, gmXhr, doc });
+        // save.js writes a plain reason for every failure; without this the
+        // user presses Save, nothing appears, and nothing is said.
+        if (!res.ok && box) box.showNote(res.reason);
+      },
       onViewChange: (view) => {
         if (library) { writePrefs(library, { view }); saveLibrary(library); }
         if (box && lastPost) box.showPost(lastPost, { view });
@@ -127,29 +145,37 @@ export function createInstagramTool({
   let lastPost = null;
 
   async function openShortcode(code) {
-    if (!code || code === current || running) return;
-    running = true;
+    if (!code) return;
+    // Already showing it, and it worked: nothing to do. A failed one may be
+    // retried by clicking it again.
+    if (code === current && box && !currentFailed) return;
+
+    const mine = ++token;
     current = code;
+    currentFailed = false;
     lastPost = null;
-    try {
-      // The stored view must be known before the first paint, or the first post
-      // of a session always opens in the default rather than the chosen one.
-      await readyPromise;
-      const view = readPrefs(library).view;
-      ensureBox(code);
-      const res = await loadPost(code, { doc });
-      if (current !== code) return; // stepped on while loading
-      if (res.ok) { lastPost = res.post; box.showPost(res.post, { view }); }
-      else box.showMessage(res.reason);
-    } finally {
-      running = false;
-    }
+
+    // The stored view must be known before the first paint, or the first post
+    // of a session always opens in the default rather than the chosen one.
+    await readyPromise;
+    if (mine !== token) return;
+
+    const view = readPrefs(library).view;
+    ensureBox(code);
+    box.showLoading();
+
+    const res = await loadPost(code, { doc });
+    if (mine !== token || !box) return; // superseded, or closed while loading
+    if (res.ok) { lastPost = res.post; box.showPost(res.post, { view }); }
+    else { currentFailed = true; box.showMessage(res.reason); }
   }
 
   function close() {
+    token += 1; // discard anything still in flight
     if (box) box.close();
     box = null;
     current = null;
+    currentFailed = false;
     lastPost = null;
   }
 
@@ -175,9 +201,36 @@ export function createInstagramTool({
     doc.addEventListener("DOMContentLoaded", fn, { once: true });
   }
 
+  // popstate alone only covers back and forward. Instagram's own router moves
+  // to a post with pushState, which fires nothing, so the viewer would sit idle
+  // while the user looked at the login wall. The originals go back on stop.
+  const patched = [];
+  function watchHistory() {
+    const h = win.history;
+    if (!h) return;
+    for (const name of ["pushState", "replaceState"]) {
+      const original = h[name];
+      if (typeof original !== "function") continue;
+      patched.push([name, original]);
+      h[name] = function (...args) {
+        const out = original.apply(this, args);
+        try { checkLocation(); } catch { /* never break the site's own routing */ }
+        return out;
+      };
+    }
+  }
+
+  function unwatchHistory() {
+    while (patched.length) {
+      const [name, original] = patched.pop();
+      try { win.history[name] = original; } catch { /* nothing to be done */ }
+    }
+  }
+
   function start() {
     doc.addEventListener("click", onClick, true);
     win.addEventListener("popstate", onPopState);
+    watchHistory();
     readyPromise.then(() => {
       // A click means the document was already there to be clicked.
       settlePending();
@@ -188,6 +241,7 @@ export function createInstagramTool({
   function stop() {
     doc.removeEventListener("click", onClick, true);
     win.removeEventListener("popstate", onPopState);
+    unwatchHistory();
     close();
   }
 

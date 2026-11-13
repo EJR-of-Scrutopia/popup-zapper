@@ -7829,8 +7829,11 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
   var SHORTCODE = /\/(?:p|reel|tv)\/([A-Za-z0-9_-]+)/;
   function shortcodeFromPath(path) {
     if (typeof path !== "string" || !path) return null;
-    const m = SHORTCODE.exec(path);
+    const m = SHORTCODE.exec(pathPartOf(path));
     return m && m[1] ? m[1] : null;
+  }
+  function pathPartOf(url) {
+    return url.split("#")[0].split("?")[0];
   }
   function shortcodeFromAnchor(el) {
     if (!el || el.nodeType !== 1) return null;
@@ -7876,7 +7879,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     const media = readMedia(doc);
     if (!media) return null;
     const hasMore = !!doc.querySelector('[aria-label="Next"], [aria-label="Next slide"]');
-    const kind = media.type === "video" ? "video" : hasMore ? "carousel" : "photo";
+    const kind = hasMore ? "carousel" : media.type === "video" ? "video" : "photo";
     return {
       kind,
       media: [media],
@@ -7899,12 +7902,29 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
     if (!url || AVATAR.test(url)) return null;
     return { type: "image", url, poster: null, index: 0 };
   }
+  var MIN_POST_PX = 240;
   function largestOtherImage(doc) {
-    const imgs = [...doc.querySelectorAll("img")].filter((i) => {
-      const s = srcOf(i);
-      return s && !AVATAR.test(s);
-    });
-    return imgs[0] || null;
+    let best = null;
+    let bestArea = 0;
+    for (const img of doc.querySelectorAll("img")) {
+      const src = srcOf(img);
+      if (!src || AVATAR.test(src)) continue;
+      const w = sizeOf(img, "width");
+      const h = sizeOf(img, "height");
+      if (w < MIN_POST_PX || h < MIN_POST_PX) continue;
+      const area = w * h;
+      if (area > bestArea) {
+        best = img;
+        bestArea = area;
+      }
+    }
+    return best;
+  }
+  function sizeOf(img, attr3) {
+    const stated = parseInt(img.getAttribute(attr3), 10);
+    if (stated > 0) return stated;
+    const natural = attr3 === "width" ? img.naturalWidth : img.naturalHeight;
+    return natural > 0 ? natural : 0;
   }
   function srcOf(el) {
     if (!el) return null;
@@ -7936,11 +7956,11 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
   // src/lib/instagram/loader.js
   var REASONS = {
     login: "Instagram asked that one to log in. Its own view may still show it.",
-    blank: "That post is not available without an account.",
+    blank: "That post did not come through. It may be private, removed, or Instagram may be rate limiting us. Its own view sometimes works.",
     unreadable: "Could not read that post's frame. Try Instagram's own view.",
     empty: "No post to open."
   };
-  async function loadPost(shortcode, { doc, timeoutMs = 2e4, pollMs = 150 } = {}) {
+  async function loadPost(shortcode, { doc, timeoutMs = 15e3, graceMs = 5e3, pollMs = 150 } = {}) {
     if (!shortcode || !doc) return { ok: false, reason: REASONS.empty };
     const frame = doc.createElement("iframe");
     frame.setAttribute("aria-hidden", "true");
@@ -7955,12 +7975,17 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
       opacity: "0",
       pointerEvents: "none"
     });
-    frame.setAttribute("src", embedUrl(shortcode));
     frame.src = embedUrl(shortcode);
+    let loadedAt = 0;
+    if (typeof frame.addEventListener === "function") {
+      frame.addEventListener("load", () => {
+        loadedAt = Date.now();
+      }, { once: true });
+    }
     const mount = doc.body || doc.documentElement;
     mount.appendChild(frame);
     try {
-      const deadline = Date.now() + timeoutMs;
+      const hardDeadline = Date.now() + timeoutMs;
       let sawLogin = false;
       for (; ; ) {
         let post = null;
@@ -7972,6 +7997,7 @@ Open the install page now? Your userscript manager will show an Update/Reinstall
           return { ok: false, reason: REASONS.unreadable };
         }
         if (post) return { ok: true, post };
+        const deadline = loadedAt ? Math.min(hardDeadline, loadedAt + graceMs) : hardDeadline;
         if (Date.now() >= deadline) {
           return { ok: false, reason: sawLogin ? REASONS.login : REASONS.blank };
         }
@@ -8065,7 +8091,20 @@ button:hover, a.btn:hover { background: #333; }
       rootEl.appendChild(backdrop);
       (doc.body || doc.documentElement).appendChild(host);
       doc.addEventListener("keydown", onKey, true);
+      showLoading();
       return api;
+    }
+    function showLoading() {
+      if (!body) return;
+      clear();
+      el("div", { class: "msg", text: "Opening this post\u2026" }, body);
+      const bar = el("div", { class: "bar" }, body);
+      el("button", { "data-pz-show-frame": "", text: "Show Instagram's own view" }, bar).addEventListener("click", () => {
+        clear();
+        showFrame(el("div", { class: "stage" }, body));
+        viewBar(body, "embed");
+      });
+      el("button", { "data-pz-cancel": "", text: "Close" }, bar).addEventListener("click", () => call(onClose));
     }
     function close() {
       if (!host) return;
@@ -8139,7 +8178,8 @@ button:hover, a.btn:hover { background: #333; }
       if (post.author && post.author.username) el("div", { class: "who", text: post.author.username }, meta);
       if (post.caption) el("div", { class: "caption", text: post.caption }, meta);
       if (post.kind === "carousel") {
-        el("div", { class: "note", text: "This post has more pictures. Instagram's own arrows step through them." }, meta);
+        const why = view === "ours" ? "This post has more pictures, and our view cannot step through a carousel, so it stays in Instagram's. Other posts still open in our view." : "This post has more pictures. Instagram's own arrows step through them.";
+        el("div", { class: "note", text: why }, meta);
       }
       if (post.kind === "video" && !post.media[0].url) {
         el("div", { class: "note", text: "The video itself is not available without an account. This is its cover frame." }, meta);
@@ -8153,6 +8193,15 @@ button:hover, a.btn:hover { background: #333; }
       if (!useFrame && post.media[0].url) {
         el("button", { "data-pz-save": "", text: "Save" }, bar).addEventListener("click", () => call(onSave, post.media[0]));
       }
+    }
+    function showNote(message) {
+      if (!body) return;
+      let note = rootEl.querySelector("[data-pz-note]");
+      if (!note) {
+        note = el("div", { class: "note", "data-pz-note": "" });
+        body.appendChild(note);
+      }
+      note.textContent = message;
     }
     function showMessage(reason) {
       if (!host) open();
@@ -8175,8 +8224,10 @@ button:hover, a.btn:hover { background: #333; }
     const api = {
       open,
       close,
+      showLoading,
       showPost,
       showMessage,
+      showNote,
       isOpen: () => !!host,
       get el() {
         return host;
@@ -8225,7 +8276,7 @@ button:hover, a.btn:hover { background: #333; }
     } catch (err) {
       return { ok: false, reason: `Could not save that file: ${err.message}` };
     } finally {
-      URL.revokeObjectURL(href);
+      setTimeout(() => URL.revokeObjectURL(href), 6e4);
     }
   }
   function fetchBlob(url, gmXhr) {
@@ -8267,7 +8318,8 @@ button:hover, a.btn:hover { background: #333; }
     let box = null;
     let current = null;
     let pending = null;
-    let running = false;
+    let currentFailed = false;
+    let token = 0;
     const readyPromise = Promise.resolve(ready).then((lib) => {
       library2 = lib;
       resolved = true;
@@ -8294,6 +8346,9 @@ button:hover, a.btn:hover { background: #333; }
       if (!isPlainLeftClick(e)) return;
       const code = shortcodeFromAnchor(e.target);
       if (!code) return;
+      if (!resolved && isSignedIn(safeCookie())) {
+        return;
+      }
       if (!resolved) {
         const anchor = e.target.closest && e.target.closest("a[href]");
         const href = anchor && anchor.getAttribute("href");
@@ -8342,7 +8397,10 @@ button:hover, a.btn:hover { background: #333; }
         shortcode: code,
         onClose: close,
         onStep: step,
-        onSave: (item) => saveMedia(item, { shortcode: current, gmXhr, doc }),
+        onSave: async (item) => {
+          const res = await saveMedia(item, { shortcode: current, gmXhr, doc });
+          if (!res.ok && box) box.showNote(res.reason);
+        },
         onViewChange: (view) => {
           if (library2) {
             writePrefs(library2, { view });
@@ -8356,28 +8414,33 @@ button:hover, a.btn:hover { background: #333; }
     }
     let lastPost = null;
     async function openShortcode(code) {
-      if (!code || code === current || running) return;
-      running = true;
+      if (!code) return;
+      if (code === current && box && !currentFailed) return;
+      const mine = ++token;
       current = code;
+      currentFailed = false;
       lastPost = null;
-      try {
-        await readyPromise;
-        const view = readPrefs(library2).view;
-        ensureBox(code);
-        const res = await loadPost2(code, { doc });
-        if (current !== code) return;
-        if (res.ok) {
-          lastPost = res.post;
-          box.showPost(res.post, { view });
-        } else box.showMessage(res.reason);
-      } finally {
-        running = false;
+      await readyPromise;
+      if (mine !== token) return;
+      const view = readPrefs(library2).view;
+      ensureBox(code);
+      box.showLoading();
+      const res = await loadPost2(code, { doc });
+      if (mine !== token || !box) return;
+      if (res.ok) {
+        lastPost = res.post;
+        box.showPost(res.post, { view });
+      } else {
+        currentFailed = true;
+        box.showMessage(res.reason);
       }
     }
     function close() {
+      token += 1;
       if (box) box.close();
       box = null;
       current = null;
+      currentFailed = false;
       lastPost = null;
     }
     let lastPathCode = null;
@@ -8398,9 +8461,37 @@ button:hover, a.btn:hover { background: #333; }
       }
       doc.addEventListener("DOMContentLoaded", fn, { once: true });
     }
+    const patched = [];
+    function watchHistory() {
+      const h = win.history;
+      if (!h) return;
+      for (const name of ["pushState", "replaceState"]) {
+        const original = h[name];
+        if (typeof original !== "function") continue;
+        patched.push([name, original]);
+        h[name] = function(...args) {
+          const out = original.apply(this, args);
+          try {
+            checkLocation();
+          } catch {
+          }
+          return out;
+        };
+      }
+    }
+    function unwatchHistory() {
+      while (patched.length) {
+        const [name, original] = patched.pop();
+        try {
+          win.history[name] = original;
+        } catch {
+        }
+      }
+    }
     function start() {
       doc.addEventListener("click", onClick, true);
       win.addEventListener("popstate", onPopState);
+      watchHistory();
       readyPromise.then(() => {
         settlePending();
         whenMountable(checkLocation);
@@ -8409,6 +8500,7 @@ button:hover, a.btn:hover { background: #333; }
     function stop() {
       doc.removeEventListener("click", onClick, true);
       win.removeEventListener("popstate", onPopState);
+      unwatchHistory();
       close();
     }
     return { start, stop, openShortcode, isActive: active, ready: readyPromise };
@@ -8943,8 +9035,11 @@ button:hover, a.btn:hover { background: #333; }
   installReloadDefense();
   async function bootAsync() {
     setTouch(detectTouch());
-    library = await loadLibraryAsync((k) => gm.get(k));
-    settleLibrary(library);
+    try {
+      library = await loadLibraryAsync((k) => gm.get(k));
+    } finally {
+      settleLibrary(library);
+    }
     setTheme(await gm.get(THEME_KEY, "auto"));
     const start = () => {
       runOnce();

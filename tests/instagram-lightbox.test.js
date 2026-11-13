@@ -214,3 +214,44 @@ describe("the two views", () => {
     expect(frame()).toBeTruthy();
   });
 });
+
+describe("the loading state", () => {
+  beforeEach(() => lb.open());
+
+  it("says it is opening rather than showing an empty box", () => {
+    lb.showLoading();
+    expect(text()).toMatch(/opening/i);
+  });
+  it("offers Instagram's own view while it waits", () => {
+    lb.showLoading();
+    expect(frameBtn()).toBeTruthy();
+  });
+  it("is replaced by the post when it arrives", () => {
+    lb.showLoading();
+    lb.showPost(photoPost, { view: "ours" });
+    expect(text()).not.toMatch(/opening/i);
+    expect(img()).toBeTruthy();
+  });
+  it("open() alone never leaves an empty sheet", () => {
+    lb.close();
+    lb.open();
+    expect(text().trim().length).toBeGreaterThan(0);
+  });
+});
+
+describe("the toggle on a carousel", () => {
+  beforeEach(() => lb.open());
+
+  it("is labelled for the view actually on screen, not the one asked for", () => {
+    lb.showPost(carouselPost, { view: "embed" });
+    expect(toggleBtn().textContent).toMatch(/our view/i);
+  });
+
+  it("explains why our view did not take effect, rather than appearing to do nothing", () => {
+    // Stored view is "embed"; the button offers "Our view". Pressing it changes
+    // the preference for every other post, but a carousel cannot honour it.
+    lb.showPost(carouselPost, { view: "ours" });
+    expect(frame()).toBeTruthy();
+    expect(text()).toMatch(/cannot step through a carousel|stays in Instagram/i);
+  });
+});

@@ -105,3 +105,40 @@ describe("loadPost", () => {
     expect(c.doc.appended).toHaveLength(0);
   });
 });
+
+describe("not asking Instagram twice", () => {
+  it("sets the frame's source exactly once", async () => {
+    const frame = fakeFrame({ html: PHOTO });
+    let sets = 0;
+    Object.defineProperty(frame, "src", {
+      get: () => frame._src,
+      set: (v) => { sets += 1; frame._src = v; },
+      configurable: true,
+    });
+    await loadPost("Abc123", ctx(frame));
+    expect(sets).toBe(1);
+  });
+});
+
+describe("saying only what it knows", () => {
+  it("does not claim a post is private when it simply never painted", async () => {
+    const r = await loadPost("Abc123", ctx(fakeFrame({ html: "<html><body></body></html>" })));
+    expect(r.ok).toBe(false);
+    expect(r.reason).not.toMatch(/without an account/i);
+    expect(r.reason).toMatch(/could not|did not|unavailable|private, removed/i);
+  });
+});
+
+describe("giving up sooner once the frame has loaded", () => {
+  it("stops at the grace period rather than the full timeout", async () => {
+    const frame = fakeFrame({ html: "<html><body></body></html>" });
+    const listeners = {};
+    frame.addEventListener = (ev, fn) => { listeners[ev] = fn; };
+    const started = Date.now();
+    const p = loadPost("Abc123", { doc: fakeDoc(frame), timeoutMs: 30000, graceMs: 120, pollMs: 10 });
+    listeners.load();
+    const r = await p;
+    expect(r.ok).toBe(false);
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+});

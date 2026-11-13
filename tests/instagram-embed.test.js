@@ -106,3 +106,33 @@ describe("falling back", () => {
     expect(post.author.username).toBe("");
   });
 });
+
+describe("the fallback image must not turn a failure into a success", () => {
+  it("takes the largest image, not the first in document order", () => {
+    const html = `<html><body>
+      <img src="https://x.cdninstagram.com/v/t51.82787-15/icon.jpg" width="24" height="24">
+      <img src="https://x.cdninstagram.com/v/t51.82787-15/real.jpg" width="1080" height="1080">
+    </body></html>`;
+    expect(readEmbedDoc(docFrom(html)).media[0].url).toBe("https://x.cdninstagram.com/v/t51.82787-15/real.jpg");
+  });
+  it("refuses images too small to be a post", () => {
+    const html = `<html><body><img src="https://x.cdninstagram.com/v/t51.82787-15/sprite.png" width="16" height="16"></body></html>`;
+    expect(readEmbedDoc(docFrom(html))).toBe(null);
+  });
+  it("refuses an unsized logo on a wall page", () => {
+    const html = `<html><body><p>Sorry</p><img src="https://static.cdninstagram.com/rsrc.php/logo.png"></body></html>`;
+    expect(readEmbedDoc(docFrom(html))).toBe(null);
+  });
+});
+
+describe("a carousel whose first child is a video", () => {
+  it("is still a carousel, not a plain video", () => {
+    const html = `<html><body>
+      <video src="https://x.cdninstagram.com/o1/v/clip.mp4" poster="https://x.cdninstagram.com/p.jpg"></video>
+      <button aria-label="Next">next</button></body></html>`;
+    const post = readEmbedDoc(docFrom(html));
+    expect(post.kind).toBe("carousel");
+    expect(post.hasMore).toBe(true);
+    expect(post.media[0].type).toBe("video");
+  });
+});

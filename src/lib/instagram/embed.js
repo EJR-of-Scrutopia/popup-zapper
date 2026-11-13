@@ -19,7 +19,10 @@ export function readEmbedDoc(doc) {
   if (!media) return null;
 
   const hasMore = !!doc.querySelector('[aria-label="Next"], [aria-label="Next slide"]');
-  const kind = media.type === "video" ? "video" : hasMore ? "carousel" : "photo";
+  // hasMore wins over the media type: a carousel whose first child is a clip is
+  // still a carousel, and must be routed like one rather than played as a lone
+  // video with no hint that there is anything behind it.
+  const kind = hasMore ? "carousel" : media.type === "video" ? "video" : "photo";
 
   return {
     kind,
@@ -48,13 +51,34 @@ function readMedia(doc) {
 }
 
 // Only reached when the embed drops its EmbeddedMediaImage class. Takes the
-// biggest image that is not the author's avatar.
+// biggest image that is not the author's avatar, and takes nothing at all
+// unless it is big enough to be a post: this path also runs on wall and error
+// pages, where returning a logo or a spacer would dress a failure up as a
+// success and hand the user a Save button for a sprite.
+const MIN_POST_PX = 240;
+
 function largestOtherImage(doc) {
-  const imgs = [...doc.querySelectorAll("img")].filter((i) => {
-    const s = srcOf(i);
-    return s && !AVATAR.test(s);
-  });
-  return imgs[0] || null;
+  let best = null;
+  let bestArea = 0;
+  for (const img of doc.querySelectorAll("img")) {
+    const src = srcOf(img);
+    if (!src || AVATAR.test(src)) continue;
+    const w = sizeOf(img, "width");
+    const h = sizeOf(img, "height");
+    if (w < MIN_POST_PX || h < MIN_POST_PX) continue;
+    const area = w * h;
+    if (area > bestArea) { best = img; bestArea = area; }
+  }
+  return best;
+}
+
+function sizeOf(img, attr) {
+  const stated = parseInt(img.getAttribute(attr), 10);
+  if (stated > 0) return stated;
+  const natural = attr === "width" ? img.naturalWidth : img.naturalHeight;
+  // An unsized image in a parsed document has no natural size to go on, so it
+  // cannot clear the bar. Better to say "not available" than to show a logo.
+  return natural > 0 ? natural : 0;
 }
 
 function srcOf(el) {

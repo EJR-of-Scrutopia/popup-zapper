@@ -47,7 +47,10 @@ export async function saveMedia(item, { shortcode, gmXhr, doc }) {
   } catch (err) {
     return { ok: false, reason: `Could not save that file: ${err.message}` };
   } finally {
-    URL.revokeObjectURL(href);
+    // Not in this task. Chromium does not reliably finish reading a blob URL
+    // within the click that started the download, and revoking underneath it
+    // fails the download outright, the more likely the bigger the file.
+    setTimeout(() => URL.revokeObjectURL(href), 60000);
   }
 }
 

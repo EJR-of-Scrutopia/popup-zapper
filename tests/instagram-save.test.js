@@ -68,9 +68,13 @@ describe("saveMedia", () => {
     await saveMedia(item, ctx);
     expect(clicked).toHaveLength(1);
   });
-  it("revokes the object URL afterwards", async () => {
-    await saveMedia(item, ctx);
+  it("revokes the object URL eventually", async () => {
+    vi.useFakeTimers();
+    const p = saveMedia(item, ctx);
+    await vi.advanceTimersByTimeAsync(60000);
+    await p;
     expect(revoked).toContain("blob:fake");
+    vi.useRealTimers();
   });
   it("gives a reason rather than throwing on a network error", async () => {
     const r = await saveMedia(item, { ...ctx, gmXhr: failXhr() });
@@ -84,13 +88,30 @@ describe("saveMedia", () => {
   });
   it("revokes the object URL even when the click throws", async () => {
     const doc = { ...ctx.doc, createElement: () => ({ setAttribute() {}, style: {}, click() { throw new Error("boom"); }, remove() {} }) };
-    const r = await saveMedia(item, { ...ctx, doc });
+    vi.useFakeTimers();
+    const p = saveMedia(item, { ...ctx, doc });
+    await vi.advanceTimersByTimeAsync(60000);
+    const r = await p;
     expect(r.ok).toBe(false);
     expect(revoked).toContain("blob:fake");
+    vi.useRealTimers();
   });
   it("refuses an item with no URL", async () => {
     const r = await saveMedia({ type: "video", url: null, index: 0 }, ctx);
     expect(r.ok).toBe(false);
     expect(ctx.gmXhr).not.toHaveBeenCalled();
+  });
+});
+
+describe("the object URL outlives the click that reads it", () => {
+  it("does not revoke in the same task as the click", async () => {
+    vi.useFakeTimers();
+    const p = saveMedia(item, ctx);
+    await vi.advanceTimersByTimeAsync(0);
+    await p;
+    expect(revoked).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(revoked).toContain("blob:fake");
+    vi.useRealTimers();
   });
 });

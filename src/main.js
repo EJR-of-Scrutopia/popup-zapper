@@ -517,8 +517,14 @@ installReloadDefense();
 
 async function bootAsync() {
   setTouch(detectTouch());
-  library = await loadLibraryAsync((k) => gm.get(k));
-  settleLibrary(library);
+  try {
+    library = await loadLibraryAsync((k) => gm.get(k));
+  } finally {
+    // Always settle, even if the load threw. The Instagram viewer holds any
+    // click that lands before this, and an unsettled promise would swallow it
+    // for good: no viewer, no navigation, nothing.
+    settleLibrary(library);
+  }
   setTheme(await gm.get(THEME_KEY, "auto"));
   const start = () => {
     runOnce();

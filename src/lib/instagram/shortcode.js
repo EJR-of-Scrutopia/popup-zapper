@@ -9,8 +9,15 @@ const SHORTCODE = /\/(?:p|reel|tv)\/([A-Za-z0-9_-]+)/;
 
 export function shortcodeFromPath(path) {
   if (typeof path !== "string" || !path) return null;
-  const m = SHORTCODE.exec(path);
+  // Only the path counts. Instagram's own login links read
+  // /accounts/login/?next=/p/<code>/, and reading the query would make every
+  // "Log in" button look like a tile.
+  const m = SHORTCODE.exec(pathPartOf(path));
   return m && m[1] ? m[1] : null;
+}
+
+function pathPartOf(url) {
+  return url.split("#")[0].split("?")[0];
 }
 
 export function shortcodeFromAnchor(el) {

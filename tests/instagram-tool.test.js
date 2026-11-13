@@ -23,6 +23,7 @@ function fakeLightbox() {
   lb = {
     open: vi.fn(), close: vi.fn(),
     showPost: vi.fn(), showMessage: vi.fn(),
+    showLoading: vi.fn(), showNote: vi.fn(),
     isOpen: vi.fn(() => true),
     el: null,
   };
@@ -257,6 +258,170 @@ describe("failures and preferences", () => {
     made[0].onViewChange("embed");
     expect(saveLibrary).toHaveBeenCalled();
     expect(lb.showPost).toHaveBeenLastCalledWith(POST, { view: "embed" });
+    t.stop();
+  });
+});
+
+describe("a load in flight must not deaden the page", () => {
+  function slowTool(library) {
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const t = tool(library);
+    loadPost.mockImplementation(async (code) => { await gate; return { ok: true, post: POST }; });
+    return { t, release };
+  }
+
+  it("a second tile click supersedes the first instead of being dropped", async () => {
+    grid(["A1", "A2"]);
+    const { t, release } = slowTool(lib());
+    t.start(); await t.ready;
+    const tiles = [...document.querySelectorAll("a img")];
+    clickOn(tiles[0]);
+    await vi.waitFor(() => expect(loadPost).toHaveBeenCalledWith("A1", expect.anything()));
+    clickOn(tiles[1]);
+    await vi.waitFor(() => expect(loadPost).toHaveBeenCalledWith("A2", expect.anything()));
+    release();
+    t.stop();
+  });
+
+  it("closing mid-load leaves the next click working", async () => {
+    grid(["A1", "A2"]);
+    const { t, release } = slowTool(lib());
+    t.start(); await t.ready;
+    const tiles = [...document.querySelectorAll("a img")];
+    clickOn(tiles[0]);
+    await vi.waitFor(() => expect(loadPost).toHaveBeenCalledWith("A1", expect.anything()));
+    made[0].onClose();
+    loadPost.mockClear();
+    clickOn(tiles[1]);
+    await vi.waitFor(() => expect(loadPost).toHaveBeenCalledWith("A2", expect.anything()));
+    release();
+    t.stop();
+  });
+
+  it("a failed post can be retried by clicking it again", async () => {
+    grid(["A1"]);
+    const t = tool(lib());
+    t.start(); await t.ready;
+    loadPost.mockResolvedValueOnce({ ok: false, reason: "nope" });
+    await t.openShortcode("A1");
+    expect(lb.showMessage).toHaveBeenCalledWith("nope");
+    loadPost.mockClear();
+    const tiles = [...document.querySelectorAll("a img")];
+    clickOn(tiles[0]);
+    await vi.waitFor(() => expect(loadPost).toHaveBeenCalledWith("A1", expect.anything()));
+    t.stop();
+  });
+
+  it("shows a loading state before the post arrives", async () => {
+    grid(["A1"]);
+    const { t, release } = slowTool(lib());
+    t.start(); await t.ready;
+    clickOn([...document.querySelectorAll("a img")][0]);
+    await vi.waitFor(() => expect(lb.showLoading).toHaveBeenCalled());
+    release();
+    t.stop();
+  });
+
+  it("ignores a stale load that lands after a newer one", async () => {
+    grid(["A1", "A2"]);
+    const t = tool(lib());
+    t.start(); await t.ready;
+    let releaseA;
+    loadPost.mockImplementation(async (code) => {
+      if (code === "A1") { await new Promise((r) => { releaseA = r; }); return { ok: true, post: { ...POST, caption: "stale" } }; }
+      return { ok: true, post: { ...POST, caption: "fresh" } };
+    });
+    const tiles = [...document.querySelectorAll("a img")];
+    clickOn(tiles[0]);
+    await vi.waitFor(() => expect(loadPost).toHaveBeenCalledWith("A1", expect.anything()));
+    clickOn(tiles[1]);
+    await vi.waitFor(() => expect(lb.showPost).toHaveBeenCalledWith(expect.objectContaining({ caption: "fresh" }), expect.anything()));
+    lb.showPost.mockClear();
+    releaseA();
+    await Promise.resolve(); await Promise.resolve();
+    expect(lb.showPost).not.toHaveBeenCalled();
+    t.stop();
+  });
+});
+
+describe("a save that fails says so", () => {
+  it("puts the reason in front of the user", async () => {
+    grid(["A1"]);
+    const t = tool(lib());
+    t.start(); await t.ready;
+    await t.openShortcode("A1");
+    // An item with no URL is the one failure save.js can reach without network.
+    await made[0].onSave({ type: "video", url: null, index: 0 });
+    expect(lb.showNote).toHaveBeenCalled();
+    expect(String(lb.showNote.mock.calls[0][0])).toMatch(/nothing to save/i);
+    t.stop();
+  });
+
+  it("says nothing when the save works", async () => {
+    grid(["A1"]);
+    const t = tool(lib());
+    t.start(); await t.ready;
+    await t.openShortcode("A1");
+    deps.gmXhr.mockImplementation((o) => o.onload({ status: 200, response: new Blob(["x"]) }));
+    globalThis.URL.createObjectURL = vi.fn(() => "blob:x");
+    globalThis.URL.revokeObjectURL = vi.fn();
+    await made[0].onSave({ type: "image", url: "https://x.cdninstagram.com/a.jpg", index: 0 });
+    expect(lb.showNote).not.toHaveBeenCalled();
+    t.stop();
+  });
+});
+
+describe("Instagram's own soft navigations", () => {
+  function historyWin(start) {
+    const w = {
+      addEventListener: vi.fn(), removeEventListener: vi.fn(),
+      location: { pathname: start, href: "https://www.instagram.com" + start },
+      history: {
+        pushState() {}, replaceState() {},
+      },
+    };
+    return w;
+  }
+
+  it("opens the viewer when the app pushes a post URL", async () => {
+    grid(["A1"]);
+    const w = historyWin("/nasa/");
+    const t = createInstagramTool({
+      doc: document, win: w, ready: Promise.resolve(lib()),
+      getCookie: () => "csrftoken=x", saveLibrary: vi.fn(), gmXhr: vi.fn(),
+      loadPost, createLightbox: (o) => { made.push(o); return fakeLightbox(); },
+    });
+    t.start(); await t.ready;
+    loadPost.mockClear();
+    w.location.pathname = "/p/Soft1/";
+    w.history.pushState({}, "", "/p/Soft1/");
+    await vi.waitFor(() => expect(loadPost).toHaveBeenCalledWith("Soft1", expect.anything()));
+    t.stop();
+  });
+
+  it("puts history back as it found it on stop", async () => {
+    const w = historyWin("/nasa/");
+    const push = w.history.pushState;
+    const t = createInstagramTool({
+      doc: document, win: w, ready: Promise.resolve(lib()),
+      getCookie: () => "csrftoken=x", saveLibrary: vi.fn(), gmXhr: vi.fn(),
+      loadPost, createLightbox: (o) => { made.push(o); return fakeLightbox(); },
+    });
+    t.start(); await t.ready;
+    expect(w.history.pushState).not.toBe(push);
+    t.stop();
+    expect(w.history.pushState).toBe(push);
+  });
+});
+
+describe("the boot window on a signed-in visit", () => {
+  it("leaves the click entirely alone rather than holding it", async () => {
+    cookie = "ds_user_id=99";
+    const tiles = grid(["A1"]);
+    const t = tool(null, { ready: new Promise(() => {}) });
+    t.start();
+    expect(clickOn(tiles[0]).defaultPrevented).toBe(false);
     t.stop();
   });
 });

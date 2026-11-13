@@ -72,3 +72,20 @@ describe("embedUrl", () => {
     expect(embedUrl("Abc123")).toBe("https://www.instagram.com/p/Abc123/embed/captioned/");
   });
 });
+
+describe("the query string is not part of the path", () => {
+  it("ignores a post code carried in a login link's next parameter", () => {
+    expect(shortcodeFromPath("/accounts/login/?next=/p/ABC123/")).toBe(null);
+  });
+  it("ignores a post code in a fragment", () => {
+    expect(shortcodeFromPath("/explore/#/p/ABC123/")).toBe(null);
+  });
+  it("still reads a real post URL carrying a query", () => {
+    expect(shortcodeFromPath("https://www.instagram.com/p/Abc123/?img_index=2")).toBe("Abc123");
+  });
+  it("ignores a login anchor whose next points at a post", () => {
+    const a = document.createElement("a");
+    a.setAttribute("href", "/accounts/login/?next=%2Fp%2FABC123%2F");
+    expect(shortcodeFromAnchor(a)).toBe(null);
+  });
+});
