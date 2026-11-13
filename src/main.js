@@ -15,6 +15,8 @@ import { revealDeep, hasResidualGating } from "./lib/reveal.js";
 import { parseVersion, updatePlan } from "./lib/updates.js";
 import { createBatchTool } from "./lib/batch/tool.js";
 import { createRecorderTool } from "./lib/recorder/tool.js";
+import { createInstagramTool } from "./lib/instagram/tool.js";
+import { readPrefs, writePrefs } from "./lib/instagram/prefs.js";
 import {
   createControlMenu, createSettingsPanel, createPickerToolbar,
   createActivityPanel, createFilterPanel, formatStatus,
@@ -33,6 +35,12 @@ const THEME_KEY = "pz-theme";
 // library is filled by bootAsync() before anything renders; writes fire-and-forget.
 let library = null;
 const persist = () => { saveLibrary((k, v) => gm.set(k, v), library); };
+
+// The Instagram viewer must have its click listener in place at document-start,
+// before the stored library can possibly have loaded, so it is handed a promise
+// bootAsync() settles rather than the library itself.
+let settleLibrary;
+const libraryReady = new Promise((resolve) => { settleLibrary = resolve; });
 const activityLog = createActivityLog();
 const undo = createUndoStack();
 
@@ -43,6 +51,16 @@ const pageWindow = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
 // The step recorder keeps its state in the manager's storage, which every
 // tab and site shares: a list and the viewer it opens are on two origins.
 const recorder = createRecorderTool({ gm, pageWindow, version: VERSION });
+
+const instagram = createInstagramTool({
+  doc: document,
+  win: window,
+  ready: libraryReady,
+  getCookie: () => document.cookie,
+  saveLibrary: () => persist(),
+  gmXhr: (details) => gm.xhr(details),
+});
+if (hostname === "instagram.com") instagram.start();
 
 const batch = createBatchTool({
   version: VERSION,
@@ -364,6 +382,7 @@ function closeSettings() { if (settingsPanel) { settingsPanel.remove(); settings
 function openSettings() {
   settingsPanel = createSettingsPanel({
     library, hostname, version: VERSION, theme: getTheme(),
+    onSetInstagram: (patch) => { writePrefs(library, patch); persist(); reopenSettings(); },
     onToggleRule: ({ rule, enabled }) => { rule.enabled = enabled; persist(); runOnce(); reopenSettings(); },
     onEditRule: ({ rule }) => {
       const next = prompt(`Edit rule value (matched by ${rule.type}):`, rule.value);
@@ -469,6 +488,15 @@ function repaint() {
   if (logPanel) renderLogPanel();
 }
 
+// Flip the Instagram viewer between our own lightbox and Instagram's embed.
+function toggleInstagramView() {
+  if (!library) return;
+  const next = readPrefs(library).view === "ours" ? "embed" : "ours";
+  writePrefs(library, { view: next });
+  persist();
+  setStatus(next === "ours" ? "Instagram posts open in our view" : "Instagram posts open in Instagram's view");
+}
+
 // ---- GM menu commands (extension-menu fallback for the on-page menu) ----
 try {
   GM_registerMenuCommand("Block a popup", startBlock);
@@ -479,6 +507,7 @@ try {
   GM_registerMenuCommand("Step recorder", () => { recorder.toggle(); });
   GM_registerMenuCommand("Settings", toggleSettings);
   GM_registerMenuCommand("Toggle zapper (this site)", toggleSite);
+  if (hostname === "instagram.com") GM_registerMenuCommand("Instagram view", toggleInstagramView);
 } catch { /* not available in all managers */ }
 
 // ---- boot ----
@@ -489,6 +518,7 @@ installReloadDefense();
 async function bootAsync() {
   setTouch(detectTouch());
   library = await loadLibraryAsync((k) => gm.get(k));
+  settleLibrary(library);
   setTheme(await gm.get(THEME_KEY, "auto"));
   const start = () => {
     runOnce();

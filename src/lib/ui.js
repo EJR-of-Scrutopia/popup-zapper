@@ -200,7 +200,7 @@ export function createSettingsPanel({
   library, hostname, version, theme, update,
   onToggleRule, onEditRule, onDeleteRule, onPromoteRule,
   onToggleCleanup, onSetTheme, onCheckUpdates, onInstallUpdate, onReloadPage, onCopyUpdate,
-  onShowLog, onDiagnostics, onClose,
+  onShowLog, onDiagnostics, onClose, onSetInstagram,
 }) {
   const t = palette();
   const panel = own(tag("div", { className: PREFIX + "settings" }), "settings");
@@ -301,6 +301,39 @@ export function createSettingsPanel({
     });
     themeRow.appendChild(seg);
     panel.appendChild(themeRow);
+  }
+
+  // --- Instagram viewer (only where it can act) ---
+  if (onSetInstagram && hostname === "instagram.com") {
+    const ig = (library && library.instagram) || {};
+    const row = (label, act, choices, current, key) => {
+      const r = tag("div");
+      r.style.cssText =
+        `display:flex;gap:8px;align-items:center;margin:10px 0 4px;border-top:1px solid ${t.border};padding-top:8px;`;
+      r.appendChild(tag("span", { textContent: label, style: `flex:1;color:${t.sub};` }));
+      const seg = tag("div");
+      seg.style.cssText = `display:flex;border:1px solid ${t.border};border-radius:6px;overflow:hidden;`;
+      choices.forEach(([value, text], i) => {
+        const on = current === value;
+        const b = tag("button", { textContent: text });
+        b.setAttribute("data-act", `${act}-${value}`);
+        b.style.cssText =
+          "border:0;padding:3px 10px;cursor:pointer;font:12px sans-serif;" +
+          (i ? `border-left:1px solid ${t.border};` : "") +
+          (on ? `background:${t.accent};color:#fff;font-weight:bold;` : `background:${t.head};color:${t.fg};`);
+        if (!on) b.addEventListener("click", () => onSetInstagram({ [key]: value }));
+        seg.appendChild(b);
+      });
+      r.appendChild(seg);
+      panel.appendChild(r);
+    };
+
+    row("Instagram posts", "ig-mode",
+      [["auto", "Signed out"], ["on", "Always"], ["off", "Never"]],
+      ig.mode || "auto", "mode");
+    row("Open them in", "ig-view",
+      [["ours", "Our view"], ["embed", "Instagram's"]],
+      ig.view || "ours", "view");
   }
 
   // --- version + updates (all in-panel; no native dialogs) ---

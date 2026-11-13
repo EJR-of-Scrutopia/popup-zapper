@@ -145,6 +145,50 @@ describe("createSettingsPanel", () => {
     onShowLog: () => {}, onDiagnostics: () => {}, onClose: () => {},
   };
 
+  const igLibrary = { global: [], domains: {}, instagram: { mode: "auto", view: "ours" } };
+
+  it("shows the Instagram section on instagram.com", () => {
+    const el = createSettingsPanel({
+      ...base, hostname: "instagram.com", library: igLibrary, onSetInstagram: () => {},
+    });
+    expect(el.textContent).toContain("Instagram posts");
+    expect(el.textContent).toContain("Open them in");
+    expect(el.querySelector('[data-act="ig-mode-auto"]')).toBeTruthy();
+    expect(el.querySelector('[data-act="ig-view-embed"]')).toBeTruthy();
+  });
+
+  it("hides the Instagram section everywhere else", () => {
+    const el = createSettingsPanel({ ...base, library: igLibrary, onSetInstagram: () => {} });
+    expect(el.textContent).not.toContain("Instagram posts");
+  });
+
+  it("reports the chosen view", () => {
+    const onSetInstagram = vi.fn();
+    const el = createSettingsPanel({
+      ...base, hostname: "instagram.com", library: igLibrary, onSetInstagram,
+    });
+    el.querySelector('[data-act="ig-view-embed"]').click();
+    expect(onSetInstagram).toHaveBeenCalledWith({ view: "embed" });
+  });
+
+  it("reports the chosen mode", () => {
+    const onSetInstagram = vi.fn();
+    const el = createSettingsPanel({
+      ...base, hostname: "instagram.com", library: igLibrary, onSetInstagram,
+    });
+    el.querySelector('[data-act="ig-mode-off"]').click();
+    expect(onSetInstagram).toHaveBeenCalledWith({ mode: "off" });
+  });
+
+  it("does not re-fire for the option already chosen", () => {
+    const onSetInstagram = vi.fn();
+    const el = createSettingsPanel({
+      ...base, hostname: "instagram.com", library: igLibrary, onSetInstagram,
+    });
+    el.querySelector('[data-act="ig-view-ours"]').click();
+    expect(onSetInstagram).not.toHaveBeenCalled();
+  });
+
   it("lists rules with toggles and shows the version", () => {
     const library = { global: [], domains: { "x.com": { rules: [{ type: "class", value: "modal", enabled: true }] } } };
     const el = createSettingsPanel({ ...base, library });
