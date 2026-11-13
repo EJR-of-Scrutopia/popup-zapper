@@ -9,7 +9,8 @@
     "build": "node build.js",
     "e2e:recorder": "node e2e/recorder.e2e.cjs",
     "e2e:batch": "node e2e/batch.e2e.cjs",
-    "release": "npm version patch -m \"chore(release): v%s\" && npm run build && git add dist/popup-zapper.user.js && git commit -m \"chore: rebuild dist\" && git push --follow-tags"
+    "release": "npm version patch -m \"chore(release): v%s\" && npm run build && git add dist/popup-zapper.user.js && git commit -m \"chore: rebuild dist\" && git push --follow-tags",
+    "e2e:instagram": "node e2e/instagram.e2e.cjs"
   },
   "devDependencies": {
     "esbuild": "^0.23.0",

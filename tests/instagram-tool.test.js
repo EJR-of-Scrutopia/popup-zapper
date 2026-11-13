@@ -154,6 +154,23 @@ describe("a post URL opened directly", () => {
     await vi.waitFor(() => expect(loadPost).toHaveBeenCalledWith("Direct1", expect.anything()));
     t.stop();
   });
+  it("waits for a body to mount into before opening", async () => {
+    href = "/p/Direct1/";
+    const t = tool(lib());
+    // document-start: the parser has not reached <body> yet.
+    const body = document.body;
+    Object.defineProperty(document, "body", { value: null, configurable: true });
+    t.start();
+    await t.ready;
+    await Promise.resolve();
+    expect(loadPost).not.toHaveBeenCalled();
+
+    Object.defineProperty(document, "body", { value: body, configurable: true });
+    document.dispatchEvent(new window.Event("DOMContentLoaded"));
+    await vi.waitFor(() => expect(loadPost).toHaveBeenCalledWith("Direct1", expect.anything()));
+    t.stop();
+  });
+
   it("does not open on a profile URL", async () => {
     href = "/nasa/";
     const t = tool(lib()); t.start();

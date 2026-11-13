@@ -168,12 +168,20 @@ export function createInstagramTool({
 
   function onPopState() { checkLocation(); }
 
+  // A post URL can resolve before the document has a body to mount into: this
+  // runs at document-start, and the viewer needs somewhere to go.
+  function whenMountable(fn) {
+    if (doc.body) { fn(); return; }
+    doc.addEventListener("DOMContentLoaded", fn, { once: true });
+  }
+
   function start() {
     doc.addEventListener("click", onClick, true);
     win.addEventListener("popstate", onPopState);
     readyPromise.then(() => {
+      // A click means the document was already there to be clicked.
       settlePending();
-      checkLocation();
+      whenMountable(checkLocation);
     });
   }
 
